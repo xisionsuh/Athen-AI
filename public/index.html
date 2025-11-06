@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Athena AI - Multi-Agent Collaborative System</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- 사이드바 -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>🧠 Athena</h1>
+        <p class="subtitle">Multi-AI Brain</p>
+        <p class="user-info" id="userInfo" style="font-size: 0.8rem; color: #b8b8d4; margin-top: 0.5rem;">
+          <span id="currentUser"></span>
+        </p>
+      </div>
+
+      <button class="new-chat-btn" id="newChatBtn">
+        <span>➕</span> 새 대화
+      </button>
+
+      <div class="sessions-list" id="sessionsList">
+        <!-- 세션 목록이 여기에 동적으로 추가됩니다 -->
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="ai-status" id="aiStatus">
+          <div class="status-title">Meta AI (총괄 AI) 계층</div>
+          <div class="status-indicators">
+            <div class="status-item">
+              <span class="status-dot" id="gptStatus"></span>
+              <span>🧠 ChatGPT</span>
+            </div>
+            <div class="status-item">
+              <span class="status-dot" id="geminiStatus"></span>
+              <span>🥈 Gemini</span>
+            </div>
+            <div class="status-item">
+              <span class="status-dot" id="claudeStatus"></span>
+              <span>🥉 Claude</span>
+            </div>
+            <div class="status-item">
+              <span class="status-dot" id="grokStatus"></span>
+              <span>🏅 Grok</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 메인 채팅 영역 -->
+    <main class="main-content">
+      <div class="chat-header">
+        <h2 id="chatTitle">새 대화</h2>
+        <div class="header-actions">
+          <button class="icon-btn" id="memoryBtn" title="장기 기억 관리">
+            📚
+          </button>
+          <button class="icon-btn" id="logoutBtn" title="로그아웃" onclick="logout()">
+            🚪
+          </button>
+        </div>
+      </div>
+
+      <div class="chat-messages" id="chatMessages">
+        <div class="welcome-screen">
+          <div class="welcome-icon">🧠</div>
+          <h2>Athena에 오신 것을 환영합니다</h2>
+          <p>여러 AI가 협업하여 최선의 답변을 제공하는 지능형 비서입니다.</p>
+          <div class="features">
+            <div class="feature">
+              <span class="feature-icon">🤝</span>
+              <span>다중 AI 협업</span>
+            </div>
+            <div class="feature">
+              <span class="feature-icon">🔍</span>
+              <span>웹 검색 통합</span>
+            </div>
+            <div class="feature">
+              <span class="feature-icon">🧠</span>
+              <span>맥락 기억</span>
+            </div>
+            <div class="feature">
+              <span class="feature-icon">💾</span>
+              <span>장기 기억</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-input-container">
+        <div class="thinking-indicator" id="thinkingIndicator" style="display: none;">
+          <div class="thinking-dot"></div>
+          <div class="thinking-dot"></div>
+          <div class="thinking-dot"></div>
+          <span id="thinkingText">생각하는 중...</span>
+        </div>
+
+        <form class="chat-input-form" id="chatForm">
+          <textarea
+            id="messageInput"
+            placeholder="메시지를 입력하세요... (Shift+Enter로 줄바꿈)"
+            rows="1"
+          ></textarea>
+          <button type="submit" class="send-btn" id="sendBtn">
+            <span>➤</span>
+          </button>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <!-- 모달들 -->
+  <!-- 장기 기억 모달 -->
+  <div class="modal" id="memoryModal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>📚 장기 기억 관리</h3>
+        <button class="close-btn" data-modal="memoryModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="memory-actions">
+          <button class="btn btn-primary" id="addMemoryBtn">새 기억 추가</button>
+          <input type="text" id="memorySearchInput" placeholder="기억 검색...">
+        </div>
+        <div class="memories-list" id="memoriesList">
+          <!-- 장기 기억 목록 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 의사결정 로그 모달 -->
+  <div class="modal" id="decisionLogModal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>🧠 사고 과정</h3>
+        <button class="close-btn" data-modal="decisionLogModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="decisionLogContent">
+          <!-- 의사결정 로그 내용 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Debate 모드 세부 의견 모달 -->
+  <div class="modal" id="debateModal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>💬 각 AI의 의견</h3>
+        <button class="close-btn" data-modal="debateModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="debateContent">
+          <!-- Debate 내용 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Voting 모드 투표 결과 모달 -->
+  <div class="modal" id="votingModal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>🗳️ 투표 결과</h3>
+        <button class="close-btn" data-modal="votingModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="votingContent">
+          <!-- Voting 내용 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Athena AI - Login</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .login-container {
+      background: white;
+      padding: 3rem;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 400px;
+      width: 90%;
+    }
+
+    .logo {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .logo-icon {
+      font-size: 4rem;
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #666;
+      margin-bottom: 2rem;
+      font-size: 0.9rem;
+    }
+
+    .demo-notice {
+      background: #e3f2fd;
+      border: 1px solid #2196f3;
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+      color: #1565c0;
+    }
+
+    .demo-notice strong {
+      display: block;
+      margin-bottom: 0.5rem;
+    }
+
+    .google-login-section {
+      margin-bottom: 1.5rem;
+    }
+
+    .google-login-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      width: 100%;
+      padding: 0.875rem 1rem;
+      background: white;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      color: #333;
+      font-size: 1rem;
+      font-weight: 500;
+      text-decoration: none;
+      transition: all 0.2s;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    .google-login-btn:hover {
+      border-color: #4285f4;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+      transform: translateY(-1px);
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      text-align: center;
+      margin: 1.5rem 0;
+      color: #999;
+      font-size: 0.9rem;
+    }
+
+    .divider::before,
+    .divider::after {
+      content: '';
+      flex: 1;
+      border-bottom: 1px solid #ddd;
+    }
+
+    .divider span {
+      padding: 0 1rem;
+    }
+
+    .login-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+    }
+
+    label {
+      margin-bottom: 0.5rem;
+      color: #555;
+      font-weight: 500;
+    }
+
+    input {
+      padding: 0.75rem;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      font-size: 1rem;
+      transition: border-color 0.2s;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .quick-login {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .quick-btn {
+      padding: 0.5rem 1rem;
+      background: #f0f0f0;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+
+    .quick-btn:hover {
+      background: #667eea;
+      color: white;
+    }
+
+    .submit-btn {
+      padding: 1rem;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s;
+      margin-top: 1rem;
+    }
+
+    .submit-btn:hover {
+      transform: translateY(-2px);
+    }
+
+    .submit-btn:active {
+      transform: translateY(0);
+    }
+
+    .info {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #f8f9fa;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    .info ul {
+      margin-left: 1.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .info li {
+      margin-bottom: 0.25rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <div class="logo">
+      <div class="logo-icon">🧠</div>
+      <h1>Athena AI</h1>
+      <p class="subtitle">Multi-Agent Collaborative System</p>
+    </div>
+
+    <div class="demo-notice">
+      <strong>🔐 로그인 방법</strong>
+      Google 계정으로 로그인하거나 테스트용 계정을 사용할 수 있습니다.
+    </div>
+
+    <!-- Google 로그인 버튼 -->
+    <div class="google-login-section">
+      <a href="/auth/google" class="google-login-btn">
+        <svg width="18" height="18" viewBox="0 0 18 18">
+          <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
+          <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z"/>
+          <path fill="#FBBC05" d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.951H.957C.347 6.174 0 7.55 0 9s.348 2.826.957 4.049l3.007-2.342z"/>
+          <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.951L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z"/>
+        </svg>
+        Google로 로그인
+      </a>
+    </div>
+
+    <div class="divider">
+      <span>또는</span>
+    </div>
+
+    <form class="login-form" id="loginForm">
+      <div class="form-group">
+        <label for="username">Username (for testing)</label>
+        <input
+          type="text"
+          id="username"
+          placeholder="Enter any name to test"
+          value="test_user"
+          required
+        >
+      </div>
+
+      <div class="form-group">
+        <label>Quick Login</label>
+        <div class="quick-login">
+          <button type="button" class="quick-btn" onclick="setUser('test_user')">Test User</button>
+          <button type="button" class="quick-btn" onclick="setUser('developer')">Developer</button>
+          <button type="button" class="quick-btn" onclick="setUser('admin')">Admin</button>
+        </div>
+      </div>
+
+      <button type="submit" class="submit-btn">
+        테스트 계정으로 시작
+      </button>
+    </form>
+
+    <div class="info">
+      <strong>Current Features:</strong>
+      <ul>
+        <li>🥇 ChatGPT as Primary Brain</li>
+        <li>🥈 Gemini as Backup</li>
+        <li>🥉 Claude as Final Backup</li>
+        <li>5 Collaboration Modes</li>
+        <li>Web Search Integration</li>
+        <li>Memory System (Short/Long-term)</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    function setUser(username) {
+      document.getElementById('username').value = username;
+    }
+
+    document.getElementById('loginForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const username = document.getElementById('username').value.trim();
+
+      if (username) {
+        // Store username in localStorage
+        localStorage.setItem('athena_user', username);
+        localStorage.setItem('athena_user_id', `user_${username}_${Date.now()}`);
+
+        // Redirect to main app
+        window.location.href = '/';
+      }
+    });
+
+    // Check if already logged in
+    if (localStorage.getItem('athena_user')) {
+      const autoLogin = confirm('Welcome back! Continue as ' + localStorage.getItem('athena_user') + '?');
+      if (autoLogin) {
+        window.location.href = '/';
+      }
+    }
+  </script>
+</body>
+</html>
