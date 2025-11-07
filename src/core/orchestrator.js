@@ -636,7 +636,7 @@ URL: ${result.link}
       }
       
       // 성공 기록
-      this.performanceMonitor.recordSuccess(tracking, responseTime);
+      this.performanceMonitor.recordSuccess(tracking, responseTime, response.usage, response.model);
 
       return {
         content: response.content,
@@ -653,7 +653,7 @@ URL: ${result.link}
       };
     } catch (error) {
       // 실패 기록
-      this.performanceMonitor.recordFailure(tracking, error);
+      this.performanceMonitor.recordFailure(tracking, error, null, null);
       logger.logAIError(agentName, error, { mode: 'single' });
       throw error;
     }
@@ -706,7 +706,7 @@ URL: ${result.link}
         const responseTime = Date.now() - startTime;
         
         // 성공 기록
-        this.performanceMonitor.recordSuccess(tracking, responseTime);
+        this.performanceMonitor.recordSuccess(tracking, responseTime, response.usage, response.model);
         
         return {
           agent: agentName,
@@ -718,8 +718,8 @@ URL: ${result.link}
         };
       } catch (error) {
         // 실패 기록
-        this.performanceMonitor.recordFailure(tracking, error);
-        logger.logAIError(agentName, error, { mode: 'parallel' });
+        this.performanceMonitor.recordFailure(tracking, error, null, null);
+        logger.logAIError(agentName, error, { strategy: 'parallel' });
         return null;
       }
     });

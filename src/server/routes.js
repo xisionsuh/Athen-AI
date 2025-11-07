@@ -3,6 +3,7 @@ import { AthenaOrchestrator } from '../core/orchestrator.js';
 import { WebSearchService } from '../utils/webSearch.js';
 import { asyncHandler, createErrorResponse } from '../utils/errorHandler.js';
 import { logger } from '../utils/logger.js';
+import { getDatabase } from '../database/schema.js';
 
 export function createRoutes(orchestrator, webSearch) {
   const router = express.Router();
@@ -68,6 +69,14 @@ export function createRoutes(orchestrator, webSearch) {
         searchResults = searchData.results;
         searchType = 'web';
         logger.info('웹 검색 완료', { resultsCount: searchResults?.length || 0 });
+        
+        // 검색 결과에 관련성 점수 포함 (있는 경우)
+        if (searchResults && searchResults.length > 0) {
+          searchResults = searchResults.map(result => ({
+            ...result,
+            relevanceScore: result.relevanceScore || webSearch.getRelevanceScore(result, message)
+          }));
+        }
       } catch (error) {
         logger.logWebSearchError(error, message, { type: 'web' });
         searchResults = null;
@@ -160,6 +169,14 @@ export function createRoutes(orchestrator, webSearch) {
           const searchData = await webSearch.search(message);
           searchResults = searchData.results;
           logger.info('웹 검색 완료 (스트리밍)', { resultsCount: searchResults?.length || 0 });
+          
+          // 검색 결과에 관련성 점수 포함 (있는 경우)
+          if (searchResults && searchResults.length > 0) {
+            searchResults = searchResults.map(result => ({
+              ...result,
+              relevanceScore: result.relevanceScore || webSearch.getRelevanceScore(result, message)
+            }));
+          }
         } catch (error) {
           logger.logWebSearchError(error, message, { type: 'web', mode: 'stream' });
           searchResults = null;
@@ -192,32 +209,32 @@ export function createRoutes(orchestrator, webSearch) {
    * 새 세션 생성
    */
   router.post('/session/new', asyncHandler(async (req, res) => {
-    const { userId, title } = req.body;
+      const { userId, title } = req.body;
 
-    if (!userId) {
+      if (!userId) {
       const error = new Error('userId 필요');
       error.status = 400;
       throw error;
-    }
+      }
 
-    // 사용자가 없으면 자동 생성
-    try {
-      const userStmt = orchestrator.memory.db.prepare(`
-        INSERT OR IGNORE INTO users (id, email, name, last_login)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-      `);
-      userStmt.run(userId, `${userId}@athena.ai`, userId);
-    } catch (userError) {
+      // 사용자가 없으면 자동 생성
+      try {
+        const userStmt = orchestrator.memory.db.prepare(`
+          INSERT OR IGNORE INTO users (id, email, name, last_login)
+          VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        `);
+        userStmt.run(userId, `${userId}@athena.ai`, userId);
+      } catch (userError) {
       logger.warn('User creation failed', userError, { userId });
-    }
+      }
 
-    const sessionId = orchestrator.memory.createSession(userId, title);
+      const sessionId = orchestrator.memory.createSession(userId, title);
     logger.info('Session created', { userId, sessionId, title });
 
-    res.json({
-      success: true,
-      sessionId
-    });
+      res.json({
+        success: true,
+        sessionId
+      });
   }));
 
   /**
@@ -225,22 +242,22 @@ export function createRoutes(orchestrator, webSearch) {
    * 세션 정보 조회
    */
   router.get('/session/:sessionId', asyncHandler(async (req, res) => {
-    const { sessionId } = req.params;
-    const session = orchestrator.memory.getSession(sessionId);
+      const { sessionId } = req.params;
+      const session = orchestrator.memory.getSession(sessionId);
 
-    if (!session) {
+      if (!session) {
       const error = new Error('세션을 찾을 수 없습니다');
       error.status = 404;
       throw error;
-    }
+      }
 
-    const messages = orchestrator.memory.getShortTermMemory(sessionId);
+      const messages = orchestrator.memory.getShortTermMemory(sessionId);
 
-    res.json({
-      success: true,
-      session,
-      messages
-    });
+      res.json({
+        success: true,
+        session,
+        messages
+      });
   }));
 
   /**
@@ -263,13 +280,13 @@ export function createRoutes(orchestrator, webSearch) {
    * 사용자의 모든 세션 조회
    */
   router.get('/sessions/:userId', asyncHandler(async (req, res) => {
-    const { userId } = req.params;
-    const sessions = orchestrator.memory.getUserSessions(userId);
+      const { userId } = req.params;
+      const sessions = orchestrator.memory.getUserSessions(userId);
 
-    res.json({
-      success: true,
-      sessions
-    });
+      res.json({
+        success: true,
+        sessions
+      });
   }));
 
   /**
@@ -277,23 +294,23 @@ export function createRoutes(orchestrator, webSearch) {
    * 장기 기억 추가
    */
   router.post('/memory/long-term', asyncHandler(async (req, res) => {
-    const { userId, category, title, content, tags, importance } = req.body;
+      const { userId, category, title, content, tags, importance } = req.body;
 
-    const result = orchestrator.memory.addLongTermMemory(
-      userId,
-      category,
-      title,
-      content,
-      tags || [],
-      importance || 5
-    );
+      const result = orchestrator.memory.addLongTermMemory(
+        userId,
+        category,
+        title,
+        content,
+        tags || [],
+        importance || 5
+      );
 
     logger.info('Long-term memory added', { userId, category, title });
 
-    res.json({
-      success: true,
-      memoryId: result.lastInsertRowid
-    });
+      res.json({
+        success: true,
+        memoryId: result.lastInsertRowid
+      });
   }));
 
   /**
@@ -301,15 +318,15 @@ export function createRoutes(orchestrator, webSearch) {
    * 장기 기억 조회
    */
   router.get('/memory/long-term/:userId', asyncHandler(async (req, res) => {
-    const { userId } = req.params;
-    const { category } = req.query;
+      const { userId } = req.params;
+      const { category } = req.query;
 
-    const memories = orchestrator.memory.getLongTermMemory(userId, category);
+      const memories = orchestrator.memory.getLongTermMemory(userId, category);
 
-    res.json({
-      success: true,
-      memories
-    });
+      res.json({
+        success: true,
+        memories
+      });
   }));
 
   /**
@@ -317,21 +334,21 @@ export function createRoutes(orchestrator, webSearch) {
    * 장기 기억 검색
    */
   router.get('/memory/search/:userId', asyncHandler(async (req, res) => {
-    const { userId } = req.params;
-    const { q } = req.query;
+      const { userId } = req.params;
+      const { q } = req.query;
 
-    if (!q) {
+      if (!q) {
       const error = new Error('검색어(q) 필요');
       error.status = 400;
       throw error;
-    }
+      }
 
-    const results = orchestrator.memory.searchLongTermMemory(userId, q);
+      const results = orchestrator.memory.searchLongTermMemory(userId, q);
 
-    res.json({
-      success: true,
-      results
-    });
+      res.json({
+        success: true,
+        results
+      });
   }));
 
   /**
@@ -339,13 +356,13 @@ export function createRoutes(orchestrator, webSearch) {
    * 의사결정 로그 조회
    */
   router.get('/decision-log/:sessionId', asyncHandler(async (req, res) => {
-    const { sessionId } = req.params;
-    const log = orchestrator.memory.getDecisionLog(sessionId);
+      const { sessionId } = req.params;
+      const log = orchestrator.memory.getDecisionLog(sessionId);
 
-    res.json({
-      success: true,
-      log
-    });
+      res.json({
+        success: true,
+        log
+      });
   }));
 
   /**
@@ -353,17 +370,17 @@ export function createRoutes(orchestrator, webSearch) {
    * AI 프로바이더 상태 확인
    */
   router.get('/health', asyncHandler(async (req, res) => {
-    const status = {};
+      const status = {};
 
-    for (const [name, provider] of Object.entries(orchestrator.providers)) {
-      status[name] = provider.getStatus();
-    }
+      for (const [name, provider] of Object.entries(orchestrator.providers)) {
+        status[name] = provider.getStatus();
+      }
 
-    res.json({
-      success: true,
-      providers: status,
-      currentBrain: orchestrator.currentBrain?.name || null
-    });
+      res.json({
+        success: true,
+        providers: status,
+        currentBrain: orchestrator.currentBrain?.name || null
+      });
   }));
 
   /**
@@ -395,23 +412,23 @@ export function createRoutes(orchestrator, webSearch) {
    * YouTube 검색 전용 엔드포인트
    */
   router.post('/search/youtube', asyncHandler(async (req, res) => {
-    const { query, numResults } = req.body;
+      const { query, numResults } = req.body;
 
-    if (!query) {
+      if (!query) {
       const error = new Error('검색어(query) 필요');
       error.status = 400;
       throw error;
-    }
+      }
 
     const results = await webSearch.search(query, { 
       numResults: numResults || 5,
       type: 'youtube'
     });
 
-    res.json({
-      success: true,
-      ...results
-    });
+      res.json({
+        success: true,
+        ...results
+      });
   }));
 
   /**
@@ -452,6 +469,219 @@ export function createRoutes(orchestrator, webSearch) {
     res.json({
       success: true,
       bestProvider
+    });
+  }));
+
+  /**
+   * GET /api/performance/usage
+   * API 사용량 상세 통계 조회
+   */
+  router.get('/performance/usage', asyncHandler(async (req, res) => {
+    const { provider, startDate, endDate } = req.query;
+    const usageStats = orchestrator.performanceMonitor.getUsageStats(provider, startDate, endDate);
+
+    res.json({
+      success: true,
+      ...usageStats
+    });
+  }));
+
+  /**
+   * GET /api/performance/cost
+   * 비용 통계 조회
+   */
+  router.get('/performance/cost', asyncHandler(async (req, res) => {
+    const { provider, startDate, endDate } = req.query;
+    const costStats = orchestrator.performanceMonitor.getCostStats(provider, startDate, endDate);
+
+    res.json({
+      success: true,
+      costStats
+    });
+  }));
+
+  /**
+   * GET /api/performance/history
+   * 성능 히스토리 조회 (시간별)
+   */
+  router.get('/performance/history', asyncHandler(async (req, res) => {
+    const { provider, hours } = req.query;
+    const history = orchestrator.performanceMonitor.getPerformanceHistory(
+      provider || null,
+      parseInt(hours) || 24
+    );
+
+    res.json({
+      success: true,
+      history
+    });
+  }));
+
+  /**
+   * POST /api/search/feedback
+   * 검색 결과 피드백 저장
+   */
+  router.post('/search/feedback', asyncHandler(async (req, res) => {
+    const { query, resultUrl, feedbackType, userId } = req.body;
+
+    if (!query || !resultUrl || !feedbackType) {
+      const error = new Error('필수 파라미터 누락: query, resultUrl, feedbackType');
+      error.status = 400;
+      throw error;
+    }
+
+    if (feedbackType !== 'useful' && feedbackType !== 'not_useful') {
+      const error = new Error('feedbackType은 "useful" 또는 "not_useful"이어야 합니다');
+      error.status = 400;
+      throw error;
+    }
+
+    webSearch.saveSearchFeedback(query, resultUrl, feedbackType, userId || null);
+    
+    res.json({
+      success: true,
+      message: '피드백이 저장되었습니다'
+    });
+  }));
+
+  /**
+   * GET /api/search/feedback/:resultUrl
+   * 검색 결과 피드백 통계 조회
+   */
+  router.get('/search/feedback/:resultUrl', asyncHandler(async (req, res) => {
+    const { resultUrl } = req.params;
+    const decodedUrl = decodeURIComponent(resultUrl);
+    const stats = webSearch.getSearchFeedbackStats(decodedUrl);
+
+    res.json({
+      success: true,
+      stats
+    });
+  }));
+
+  /**
+   * POST /api/debate/feedback
+   * Debate 의견 피드백 저장
+   */
+  router.post('/debate/feedback', asyncHandler(async (req, res) => {
+    const { sessionId, debateId, feedbackType, userId } = req.body;
+
+    if (!sessionId || !debateId || !feedbackType) {
+      const error = new Error('필수 파라미터 누락: sessionId, debateId, feedbackType');
+      error.status = 400;
+      throw error;
+    }
+
+    if (feedbackType !== 'like' && feedbackType !== 'dislike') {
+      const error = new Error('feedbackType은 "like" 또는 "dislike"이어야 합니다');
+      error.status = 400;
+      throw error;
+    }
+
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO debate_feedback (session_id, debate_id, feedback_type, user_id)
+      VALUES (?, ?, ?, ?)
+    `).run(sessionId, debateId, feedbackType, userId || null);
+    
+    res.json({
+      success: true,
+      message: '피드백이 저장되었습니다'
+    });
+  }));
+
+  /**
+   * GET /api/debate/feedback/:sessionId/:debateId
+   * Debate 의견 피드백 통계 조회
+   */
+  router.get('/debate/feedback/:sessionId/:debateId', asyncHandler(async (req, res) => {
+    const { sessionId, debateId } = req.params;
+    const db = getDatabase();
+    
+    const stats = db.prepare(`
+      SELECT 
+        feedback_type,
+        COUNT(*) as count
+      FROM debate_feedback
+      WHERE session_id = ? AND debate_id = ?
+      GROUP BY feedback_type
+    `).all(sessionId, debateId);
+
+    const result = { like: 0, dislike: 0 };
+    stats.forEach(stat => {
+      if (stat.feedback_type === 'like') {
+        result.like = stat.count;
+      } else if (stat.feedback_type === 'dislike') {
+        result.dislike = stat.count;
+      }
+    });
+
+    res.json({
+      success: true,
+      stats: result
+    });
+  }));
+
+  /**
+   * POST /api/voting/feedback
+   * Voting 선택 피드백 저장
+   */
+  router.post('/voting/feedback', asyncHandler(async (req, res) => {
+    const { sessionId, voteId, feedbackType, userId } = req.body;
+
+    if (!sessionId || !voteId || !feedbackType) {
+      const error = new Error('필수 파라미터 누락: sessionId, voteId, feedbackType');
+      error.status = 400;
+      throw error;
+    }
+
+    if (feedbackType !== 'like' && feedbackType !== 'dislike') {
+      const error = new Error('feedbackType은 "like" 또는 "dislike"이어야 합니다');
+      error.status = 400;
+      throw error;
+    }
+
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO voting_feedback (session_id, vote_id, feedback_type, user_id)
+      VALUES (?, ?, ?, ?)
+    `).run(sessionId, voteId, feedbackType, userId || null);
+    
+    res.json({
+      success: true,
+      message: '피드백이 저장되었습니다'
+    });
+  }));
+
+  /**
+   * GET /api/voting/feedback/:sessionId/:voteId
+   * Voting 선택 피드백 통계 조회
+   */
+  router.get('/voting/feedback/:sessionId/:voteId', asyncHandler(async (req, res) => {
+    const { sessionId, voteId } = req.params;
+    const db = getDatabase();
+    
+    const stats = db.prepare(`
+      SELECT 
+        feedback_type,
+        COUNT(*) as count
+      FROM voting_feedback
+      WHERE session_id = ? AND vote_id = ?
+      GROUP BY feedback_type
+    `).all(sessionId, voteId);
+
+    const result = { like: 0, dislike: 0 };
+    stats.forEach(stat => {
+      if (stat.feedback_type === 'like') {
+        result.like = stat.count;
+      } else if (stat.feedback_type === 'dislike') {
+        result.dislike = stat.count;
+      }
+    });
+
+    res.json({
+      success: true,
+      stats: result
     });
   }));
 

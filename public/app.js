@@ -334,6 +334,7 @@ async function handleSendMessage(e) {
 
   // UI 업데이트
   addMessage('user', message);
+  window.lastUserMessage = message; // 마지막 사용자 메시지 저장
   messageInput.value = '';
   messageInput.style.height = 'auto';
   showThinking('생각하는 중...');
@@ -1239,10 +1240,15 @@ function addMessage(role, content, metadata = null) {
         const sourceItem = document.createElement('div');
         sourceItem.className = 'source-item';
         sourceItem.setAttribute('data-source-url', result.link);
+        sourceItem.setAttribute('data-source-index', index);
         const reliability = getSourceReliability(result.link);
         const reliabilityClass = reliability.includes('높음') ? 'reliability-high' : 
                                  reliability.includes('낮음') ? 'reliability-low' : 'reliability-medium';
         const citationCount = citationStats[index] || 0;
+        
+        // 관련성 점수 표시 (있는 경우)
+        const relevanceScore = result.relevanceScore !== undefined ? (result.relevanceScore * 100).toFixed(0) : null;
+        const relevanceBadge = relevanceScore ? `<span class="relevance-score" title="관련성 점수">⭐ ${relevanceScore}%</span>` : '';
         
         // 출처 검증 상태 확인
         const isVerified = isSourceVerified(result.link);
@@ -1259,16 +1265,35 @@ function addMessage(role, content, metadata = null) {
               </a>
               <div class="source-badges">
                 ${verifiedBadge}
+                ${relevanceBadge}
                 <span class="source-reliability ${reliabilityClass}">${reliability}</span>
                 ${citationCount > 0 ? `<span class="citation-badge">인용 ${citationCount}회</span>` : ''}
               </div>
             </div>
             <div class="source-link">${result.link}</div>
             ${result.snippet ? `<div class="source-snippet">${result.snippet}</div>` : ''}
+            <div class="source-feedback">
+              <button class="feedback-btn useful-btn" onclick="submitSearchFeedback('${result.link.replace(/'/g, "\\'")}', 'useful', ${index})" title="유용함">
+                👍 유용함
+              </button>
+              <button class="feedback-btn not-useful-btn" onclick="submitSearchFeedback('${result.link.replace(/'/g, "\\'")}', 'not_useful', ${index})" title="유용하지 않음">
+                👎 유용하지 않음
+              </button>
+              <button class="feedback-btn refresh-btn" onclick="refreshSearchResult(${index})" title="검색 결과 새로고침">
+                🔄 새로고침
+              </button>
+            </div>
           </div>
         `;
         sourcesList.appendChild(sourceItem);
       });
+      
+      // 검색 결과 요약 버튼 추가
+      const summaryBtn = document.createElement('button');
+      summaryBtn.className = 'summary-btn';
+      summaryBtn.textContent = '📝 검색 결과 요약 보기';
+      summaryBtn.onclick = () => showSearchSummary(metadata.searchResults, window.lastUserMessage || '');
+      sourcesHeader.appendChild(summaryBtn);
       
       sourcesSection.appendChild(sourcesList);
       metadataDiv.appendChild(sourcesSection);
@@ -2022,6 +2047,294 @@ function initModalHandlers() {
   });
 }
 
+// 검색 결과 피드백 제출
+window.submitSearchFeedback = async function(resultUrl, feedbackType, sourceIndex) {
+  try {
+    const currentMessage = document.querySelector('.message.assistant:last-child');
+    if (!currentMessage) return;
+    
+    const metadataDiv = currentMessage.querySelector('.message-metadata');
+    if (!metadataDiv) return;
+    
+    const sourcesSection = metadataDiv.querySelector('.sources-section');
+    if (!sourcesSection) return;
+    
+    const sourceItem = sourcesSection.querySelectorAll('.source-item')[sourceIndex];
+    if (!sourceItem) return;
+    
+    const query = window.lastUserMessage || '';
+    
+    const response = await fetch(`${API_BASE}/search/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: query,
+        resultUrl: resultUrl,
+        feedbackType: feedbackType,
+        userId: currentUserId
+      })
+    });
+    
+    if (response.ok) {
+      // 피드백 버튼 업데이트
+      const feedbackBtns = sourceItem.querySelectorAll('.feedback-btn');
+      feedbackBtns.forEach(btn => {
+        btn.classList.remove('active');
+        if ((feedbackType === 'useful' && btn.classList.contains('useful-btn')) ||
+            (feedbackType === 'not_useful' && btn.classList.contains('not-useful-btn'))) {
+          btn.classList.add('active');
+        }
+      });
+      
+      // 피드백 통계 업데이트
+      updateSearchFeedbackStats(resultUrl, sourceIndex);
+    }
+  } catch (error) {
+    console.error('Failed to submit search feedback:', error);
+  }
+};
+
+// 검색 결과 피드백 통계 업데이트
+async function updateSearchFeedbackStats(resultUrl, sourceIndex) {
+  try {
+    const encodedUrl = encodeURIComponent(resultUrl);
+    const response = await fetch(`${API_BASE}/search/feedback/${encodedUrl}`);
+    const data = await response.json();
+    
+    if (data.success && data.stats) {
+      const currentMessage = document.querySelector('.message.assistant:last-child');
+      if (!currentMessage) return;
+      
+      const metadataDiv = currentMessage.querySelector('.message-metadata');
+      if (!metadataDiv) return;
+      
+      const sourcesSection = metadataDiv.querySelector('.sources-section');
+      if (!sourcesSection) return;
+      
+      const sourceItem = sourcesSection.querySelectorAll('.source-item')[sourceIndex];
+      if (!sourceItem) return;
+      
+      const feedbackDiv = sourceItem.querySelector('.source-feedback');
+      if (feedbackDiv && (data.stats.useful > 0 || data.stats.notUseful > 0)) {
+        const statsText = `(${data.stats.useful}👍 ${data.stats.notUseful}👎)`;
+        if (!feedbackDiv.querySelector('.feedback-stats')) {
+          const statsSpan = document.createElement('span');
+          statsSpan.className = 'feedback-stats';
+          statsSpan.textContent = statsText;
+          feedbackDiv.appendChild(statsSpan);
+        } else {
+          feedbackDiv.querySelector('.feedback-stats').textContent = statsText;
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to update feedback stats:', error);
+  }
+}
+
+// 검색 결과 새로고침 (단일)
+window.refreshSearchResult = async function(sourceIndex) {
+  try {
+    const currentMessage = document.querySelector('.message.assistant:last-child');
+    if (!currentMessage) return;
+    
+    const metadataDiv = currentMessage.querySelector('.message-metadata');
+    if (!metadataDiv) return;
+    
+    const sourcesSection = metadataDiv.querySelector('.sources-section');
+    if (!sourcesSection) return;
+    
+    const sourceItem = sourcesSection.querySelectorAll('.source-item')[sourceIndex];
+    if (!sourceItem) return;
+    
+    const query = sourceItem.getAttribute('data-query') || window.lastUserMessage || '';
+    const resultUrl = sourceItem.getAttribute('data-source-url');
+    
+    if (!query) {
+      alert('검색어를 찾을 수 없습니다.');
+      return;
+    }
+    
+    // 검색 재실행
+    const response = await fetch(`${API_BASE}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, numResults: 5 })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success && data.results && data.results.length > 0) {
+      // 해당 인덱스의 결과 업데이트
+      const newResult = data.results[sourceIndex] || data.results[0];
+      
+      // UI 업데이트
+      const titleLink = sourceItem.querySelector('.source-title');
+      const snippetDiv = sourceItem.querySelector('.source-snippet');
+      
+      if (titleLink) {
+        titleLink.textContent = newResult.title || '제목 없음';
+        titleLink.href = newResult.link;
+      }
+      
+      if (snippetDiv && newResult.snippet) {
+        snippetDiv.textContent = newResult.snippet;
+      }
+      
+      // 관련성 점수 업데이트
+      if (newResult.relevanceScore !== undefined) {
+        const relevanceScore = (newResult.relevanceScore * 100).toFixed(0);
+        const badgesDiv = sourceItem.querySelector('.source-badges');
+        const existingRelevance = badgesDiv.querySelector('.relevance-score');
+        
+        if (existingRelevance) {
+          existingRelevance.textContent = `⭐ ${relevanceScore}%`;
+        } else {
+          const relevanceBadge = document.createElement('span');
+          relevanceBadge.className = 'relevance-score';
+          relevanceBadge.title = '관련성 점수';
+          relevanceBadge.textContent = `⭐ ${relevanceScore}%`;
+          badgesDiv.insertBefore(relevanceBadge, badgesDiv.firstChild.nextSibling);
+        }
+      }
+      
+      alert('검색 결과가 업데이트되었습니다.');
+    } else {
+      alert('검색 결과를 가져올 수 없습니다.');
+    }
+  } catch (error) {
+    console.error('Failed to refresh search result:', error);
+    alert('검색 결과를 새로고침하는 중 오류가 발생했습니다.');
+  }
+};
+
+// 모든 검색 결과 새로고침
+async function refreshAllSearchResults(results, query) {
+  if (!query) {
+    alert('검색어를 찾을 수 없습니다.');
+    return;
+  }
+  
+  if (!confirm('모든 검색 결과를 새로고침하시겠습니까?')) {
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${API_BASE}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, numResults: results.length || 5 })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success && data.results && data.results.length > 0) {
+      // 현재 메시지의 검색 결과 업데이트
+      const currentMessage = document.querySelector('.message.assistant:last-child');
+      if (!currentMessage) return;
+      
+      const metadataDiv = currentMessage.querySelector('.message-metadata');
+      if (!metadataDiv) return;
+      
+      const sourcesSection = metadataDiv.querySelector('.sources-section');
+      if (!sourcesSection) return;
+      
+      const sourceItems = sourcesSection.querySelectorAll('.source-item');
+      
+      data.results.forEach((newResult, index) => {
+        if (index < sourceItems.length) {
+          const sourceItem = sourceItems[index];
+          const titleLink = sourceItem.querySelector('.source-title');
+          const snippetDiv = sourceItem.querySelector('.source-snippet');
+          
+          if (titleLink) {
+            titleLink.textContent = newResult.title || '제목 없음';
+            titleLink.href = newResult.link;
+          }
+          
+          if (snippetDiv) {
+            snippetDiv.textContent = newResult.snippet || '';
+          }
+          
+          // 관련성 점수 업데이트
+          if (newResult.relevanceScore !== undefined) {
+            const relevanceScore = (newResult.relevanceScore * 100).toFixed(0);
+            const badgesDiv = sourceItem.querySelector('.source-badges');
+            const existingRelevance = badgesDiv.querySelector('.relevance-score');
+            
+            if (existingRelevance) {
+              existingRelevance.textContent = `⭐ ${relevanceScore}%`;
+            } else {
+              const relevanceBadge = document.createElement('span');
+              relevanceBadge.className = 'relevance-score';
+              relevanceBadge.title = '관련성 점수';
+              relevanceBadge.textContent = `⭐ ${relevanceScore}%`;
+              badgesDiv.insertBefore(relevanceBadge, badgesDiv.firstChild.nextSibling);
+            }
+          }
+        }
+      });
+      
+      alert('모든 검색 결과가 업데이트되었습니다.');
+    } else {
+      alert('검색 결과를 가져올 수 없습니다.');
+    }
+  } catch (error) {
+    console.error('Failed to refresh search results:', error);
+    alert('검색 결과를 새로고침하는 중 오류가 발생했습니다.');
+  }
+}
+
+// 검색 결과 요약 표시
+async function showSearchSummary(results, query) {
+  try {
+    const response = await fetch(`${API_BASE}/search/summarize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, results })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success && data.summary) {
+      const modal = document.createElement('div');
+      modal.className = 'modal';
+      modal.style.display = 'flex';
+      modal.innerHTML = `
+        <div class="modal-content" style="max-width: 600px;">
+          <div class="modal-header">
+            <h3>📝 검색 결과 요약</h3>
+            <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="search-summary-content">
+              <div class="summary-query">
+                <strong>검색어:</strong> ${escapeHtml(query)}
+              </div>
+              <div class="summary-text">
+                ${formatMessage(data.summary, null)}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      
+      // 모달 외부 클릭시 닫기
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          modal.remove();
+        }
+      });
+    } else {
+      alert('검색 결과 요약을 생성할 수 없습니다.');
+    }
+  } catch (error) {
+    console.error('Failed to get search summary:', error);
+    alert('검색 결과 요약을 불러오는 중 오류가 발생했습니다.');
+  }
+}
+
 // 출처 토글 함수
 function toggleSources(element) {
   const sourcesSection = element.closest('.sources-section');
@@ -2102,39 +2415,50 @@ function showDebateDetails(metadata) {
   });
   html += '</div>';
   
-  // 의견 비교 뷰
+  // 의견 비교 뷰 - 개선된 병렬 비교
   html += '<div id="debate-compare-view" class="debate-view" style="display: none;">';
   const agents = new Set();
   metadata.debates.forEach(round => {
     round.forEach(debate => agents.add(debate.agent));
   });
   
+  // 병렬 비교 테이블 형식으로 개선
+  html += '<div class="compare-table-container">';
+  html += '<table class="compare-table">';
+  html += '<thead><tr><th>AI</th>';
+  metadata.debates.forEach((round, idx) => {
+    html += `<th>Round ${idx + 1}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+  
   Array.from(agents).forEach(agent => {
     const agentIcon = getAgentIcon(agent);
-    html += `
-      <div class="compare-agent-section">
-        <div class="compare-agent-header">
-          <span class="opinion-agent">${agentIcon} ${agent}</span>
-        </div>
-        <div class="compare-opinions">`;
+    html += `<tr><td class="compare-agent-cell">${agentIcon} ${agent}</td>`;
     
     metadata.debates.forEach((round, roundIndex) => {
       const opinion = round.find(d => d.agent === agent);
+      const prevOpinion = roundIndex > 0 ? metadata.debates[roundIndex - 1].find(d => d.agent === agent) : null;
+      const hasChanged = prevOpinion && prevOpinion.opinion !== opinion?.opinion;
+      
       if (opinion) {
-        html += `
-          <div class="compare-opinion-item">
-            <div class="compare-round-label">Round ${roundIndex + 1}</div>
-            <div class="compare-opinion-content">${formatMessage(opinion.opinion, metadata.searchResults || null)}</div>
-          </div>
-        `;
+        html += `<td class="compare-opinion-cell ${hasChanged ? 'opinion-changed' : ''}">`;
+        if (hasChanged) {
+          html += '<span class="change-indicator">🔄</span>';
+        }
+        html += `<div class="compare-opinion-text">${formatMessage(opinion.opinion.substring(0, 200) + (opinion.opinion.length > 200 ? '...' : ''), metadata.searchResults || null)}</div>`;
+        html += '</td>';
+      } else {
+        html += '<td class="compare-opinion-cell no-opinion">-</td>';
       }
     });
     
-    html += `</div></div>`;
+    html += '</tr>';
   });
+  
+  html += '</tbody></table></div>';
   html += '</div>';
   
-  // 변화 추적 뷰
+  // 변화 추적 뷰 - 개선된 변경 내용 표시
   html += '<div id="debate-timeline-view" class="debate-view" style="display: none;">';
   html += '<div class="timeline-container">';
   
@@ -2150,12 +2474,26 @@ function showDebateDetails(metadata) {
       const prevRound = roundIndex > 0 ? metadata.debates[roundIndex - 1].find(d => d.agent === debate.agent) : null;
       const hasChanged = prevRound && prevRound.opinion !== debate.opinion;
       
+      // 변경 내용 추출 (간단한 diff)
+      let changeSummary = '';
+      if (hasChanged && prevRound) {
+        const prevWords = prevRound.opinion.split(/\s+/).slice(0, 10).join(' ');
+        const currWords = debate.opinion.split(/\s+/).slice(0, 10).join(' ');
+        if (prevWords !== currWords) {
+          changeSummary = `<div class="change-summary">
+            <strong>변경 전:</strong> ${prevWords}...
+            <br><strong>변경 후:</strong> ${currWords}...
+          </div>`;
+        }
+      }
+      
       html += `
         <div class="timeline-opinion ${hasChanged ? 'opinion-changed' : ''}">
           <div class="timeline-opinion-header">
             <span class="opinion-agent">${agentIcon} ${debate.agent}</span>
-            ${hasChanged ? '<span class="change-badge">변화 있음</span>' : '<span class="change-badge no-change">변화 없음</span>'}
+            ${hasChanged ? '<span class="change-badge">🔄 변화 있음</span>' : '<span class="change-badge no-change">✓ 변화 없음</span>'}
           </div>
+          ${changeSummary}
           <div class="timeline-opinion-content">${formatMessage(debate.opinion, metadata.searchResults || null)}</div>
         </div>
       `;
@@ -2192,51 +2530,112 @@ window.switchDebateView = function(view) {
   document.querySelector(`[data-view="${view}"]`).classList.add('active');
 };
 
-// 의견 피드백 토글 함수
-window.toggleOpinionFeedback = function(opinionId, type) {
-  const key = `opinion-feedback-${opinionId}-${type}`;
-  const currentCount = parseInt(localStorage.getItem(key) || '0');
-  const newCount = currentCount === 0 ? 1 : 0;
-  
-  localStorage.setItem(key, newCount.toString());
-  
-  const countElement = document.getElementById(`${type}-${opinionId}`);
-  if (countElement) {
-    countElement.textContent = newCount;
-  }
-  
-  // 버튼 활성화 상태 업데이트
-  const button = event.target.closest('.opinion-feedback-btn');
-  if (button) {
-    if (newCount > 0) {
-      button.classList.add('active');
-    } else {
-      button.classList.remove('active');
+// 의견 피드백 토글 함수 (서버 연동)
+window.toggleOpinionFeedback = async function(opinionId, type) {
+  try {
+    const currentMessage = document.querySelector('.message.assistant:last-child');
+    if (!currentMessage) return;
+    
+    const metadataDiv = currentMessage.querySelector('.message-metadata');
+    if (!metadataDiv) return;
+    
+    // debateId 생성 (round + agent 조합)
+    const opinionElement = document.getElementById(opinionId);
+    if (!opinionElement) return;
+    
+    const debateOpinion = opinionElement.closest('.debate-opinion');
+    if (!debateOpinion) return;
+    
+    const round = debateOpinion.getAttribute('data-round');
+    const agent = debateOpinion.getAttribute('data-agent');
+    const debateId = `${round}-${agent}`;
+    
+    const response = await fetch(`${API_BASE}/debate/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: currentSessionId,
+        debateId: debateId,
+        feedbackType: type,
+        userId: currentUserId
+      })
+    });
+    
+    if (response.ok) {
+      // 피드백 통계 업데이트
+      await updateOpinionFeedback(opinionId, debateId, type);
     }
+  } catch (error) {
+    console.error('Failed to submit opinion feedback:', error);
   }
 };
 
-// 피드백 데이터 로드
-function loadOpinionFeedback() {
-  document.querySelectorAll('.opinion-feedback-btn').forEach(btn => {
-    const onclick = btn.getAttribute('onclick');
-    const match = onclick.match(/toggleOpinionFeedback\('([^']+)',\s*'([^']+)'\)/);
-    if (match) {
-      const opinionId = match[1];
-      const type = match[2];
-      const key = `opinion-feedback-${opinionId}-${type}`;
-      const count = parseInt(localStorage.getItem(key) || '0');
+// 의견 피드백 통계 업데이트
+async function updateOpinionFeedback(opinionId, debateId, type) {
+  try {
+    const response = await fetch(`${API_BASE}/debate/feedback/${currentSessionId}/${debateId}`);
+    const data = await response.json();
+    
+    if (data.success && data.stats) {
+      const likeCount = document.getElementById(`like-${opinionId}`);
+      const dislikeCount = document.getElementById(`dislike-${opinionId}`);
       
-      const countElement = document.getElementById(`${type}-${opinionId}`);
-      if (countElement) {
-        countElement.textContent = count;
+      if (likeCount) {
+        likeCount.textContent = data.stats.like || 0;
+      }
+      if (dislikeCount) {
+        dislikeCount.textContent = data.stats.dislike || 0;
       }
       
-      if (count > 0) {
-        btn.classList.add('active');
+      // 버튼 활성화 상태 업데이트
+      const button = event.target.closest('.opinion-feedback-btn');
+      if (button) {
+        const allButtons = button.parentElement.querySelectorAll('.opinion-feedback-btn');
+        allButtons.forEach(btn => btn.classList.remove('active'));
+        
+        if (type === 'like' && data.stats.like > 0) {
+          button.classList.add('active');
+        } else if (type === 'dislike' && data.stats.dislike > 0) {
+          button.classList.add('active');
+        }
       }
     }
-  });
+  } catch (error) {
+    console.error('Failed to update opinion feedback:', error);
+  }
+}
+
+// 피드백 데이터 로드 (서버에서)
+async function loadOpinionFeedback() {
+  try {
+    const debateOpinions = document.querySelectorAll('.debate-opinion');
+    
+    for (const opinion of debateOpinions) {
+      const round = opinion.getAttribute('data-round');
+      const agent = opinion.getAttribute('data-agent');
+      const debateId = `${round}-${agent}`;
+      const opinionId = opinion.querySelector('.opinion-content')?.id;
+      
+      if (!opinionId) continue;
+      
+      const response = await fetch(`${API_BASE}/debate/feedback/${currentSessionId}/${debateId}`);
+      const data = await response.json();
+      
+      if (data.success && data.stats) {
+        const likeCount = document.getElementById(`like-${opinionId}`);
+        const dislikeCount = document.getElementById(`dislike-${opinionId}`);
+        
+        if (likeCount) {
+          likeCount.textContent = data.stats.like || 0;
+        }
+        if (dislikeCount) {
+          dislikeCount.textContent = data.stats.dislike || 0;
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load opinion feedback:', error);
+  }
 }
 
 // Debate 라운드 토글 함수
@@ -2297,21 +2696,40 @@ function showVotingDetails(metadata) {
     });
   });
   
-  // 투표 통계 표시 (개선된 시각화)
+  // 투표 통계 표시 (개선된 시각화 및 통계)
   if (Object.keys(voteCounts).length > 0) {
     html += '<div class="voting-stats">';
     html += '<h4>📊 투표 집계</h4>';
-    html += '<div class="vote-chart">';
     
+    // 통계 요약 추가
     const sortedVotes = Object.entries(voteCounts)
       .sort((a, b) => b[1] - a[1]);
     const maxVotes = Math.max(...Object.values(voteCounts));
     const totalVotes = metadata.votes.length;
+    const consensus = maxVotes === totalVotes;
+    const majority = maxVotes > totalVotes / 2;
+    
+    html += '<div class="vote-summary-header">';
+    html += `<div class="summary-stat">
+      <span class="stat-label">총 투표:</span>
+      <span class="stat-value">${totalVotes}표</span>
+    </div>`;
+    html += `<div class="summary-stat">
+      <span class="stat-label">선택지:</span>
+      <span class="stat-value">${Object.keys(voteCounts).length}개</span>
+    </div>`;
+    html += `<div class="summary-stat">
+      <span class="stat-label">합의:</span>
+      <span class="stat-value ${consensus ? 'consensus-yes' : 'consensus-no'}">${consensus ? '✅ 만장일치' : majority ? '✅ 과반수' : '⚠️ 분산'}</span>
+    </div>`;
+    html += '</div>';
+    
+    html += '<div class="vote-chart">';
     
     sortedVotes.forEach(([choice, count], index) => {
       const percentage = (count / totalVotes) * 100;
       const barWidth = (count / maxVotes) * 100;
-      const isWinner = index === 0 && count === maxVotes;
+      const isWinner = index === 0;
       const colorClass = isWinner ? 'vote-winner' : `vote-color-${index % 4}`;
       
       html += `
@@ -2339,11 +2757,9 @@ function showVotingDetails(metadata) {
       html += `
         <div class="vote-summary">
           <div class="summary-item">
-            <strong>총 투표:</strong> ${totalVotes}표
-          </div>
-          <div class="summary-item">
             <strong>승리 선택:</strong> <span class="winner-choice">${winner[0]}</span> (${winnerPercentage.toFixed(1)}%)
           </div>
+          ${consensus ? '<div class="summary-item consensus-note">✅ 모든 AI가 동일한 선택을 했습니다.</div>' : ''}
         </div>
       `;
     }
@@ -2356,26 +2772,24 @@ function showVotingDetails(metadata) {
   html += '<h4>💭 각 AI의 의견</h4>';
   
   voteDetails.forEach((vote, index) => {
-    const choiceColor = vote.choice && voteCounts[vote.choice] ? 
-      `vote-choice-${Object.keys(voteCounts).indexOf(vote.choice) % 4}` : '';
-    
+    const voteId = `vote-${index}`;
+    const choice = vote.choice || voteId;
     html += `
-      <div class="vote-item" data-agent="${vote.agent}">
+      <div class="vote-item" data-vote-id="${voteId}" data-choice="${choice}">
         <div class="vote-header">
-          <span class="vote-agent">
-            ${vote.agentIcon} ${vote.agent}
-          </span>
-          ${vote.choice ? `<span class="vote-badge ${choiceColor}">선택: ${vote.choice}</span>` : '<span class="vote-badge no-choice">선택 없음</span>'}
-          <div class="vote-feedback">
-            <button class="vote-feedback-btn" onclick="toggleVoteFeedback('vote-${index}', 'like')" title="좋아요">
-              👍 <span class="feedback-count" id="like-vote-${index}">0</span>
+          <span class="vote-agent">${vote.agentIcon} ${vote.agent}</span>
+          ${vote.choice ? `<span class="vote-badge">선택: ${vote.choice}</span>` : '<span class="vote-badge no-choice">선택 없음</span>'}
+          <div class="vote-actions">
+            <button class="vote-feedback-btn" onclick="toggleVoteFeedback('${voteId}', 'like', '${choice}')" title="좋아요">
+              👍 <span class="feedback-count" id="like-${voteId}">0</span>
             </button>
-            <button class="vote-feedback-btn" onclick="toggleVoteFeedback('vote-${index}', 'dislike')" title="싫어요">
-              👎 <span class="feedback-count" id="dislike-vote-${index}">0</span>
+            <button class="vote-feedback-btn" onclick="toggleVoteFeedback('${voteId}', 'dislike', '${choice}')" title="싫어요">
+              👎 <span class="feedback-count" id="dislike-${voteId}">0</span>
             </button>
           </div>
         </div>
-        <div class="vote-content" id="vote-${index}">${formatMessage(vote.response, metadata.searchResults || null)}</div>
+        <div class="vote-content">${formatMessage(vote.response, metadata.searchResults || null)}</div>
+        ${vote.choice ? `<div class="vote-choice-badge">선택: <strong>${vote.choice}</strong></div>` : ''}
       </div>
     `;
   });
@@ -2410,50 +2824,98 @@ function showVotingDetails(metadata) {
   loadVoteFeedback();
 }
 
-// 투표 피드백 토글 함수
-window.toggleVoteFeedback = function(voteId, type) {
-  const key = `vote-feedback-${voteId}-${type}`;
-  const currentCount = parseInt(localStorage.getItem(key) || '0');
-  const newCount = currentCount === 0 ? 1 : 0;
-  
-  localStorage.setItem(key, newCount.toString());
-  
-  const countElement = document.getElementById(`${type}-${voteId}`);
-  if (countElement) {
-    countElement.textContent = newCount;
-  }
-  
-  const button = event.target.closest('.vote-feedback-btn');
-  if (button) {
-    if (newCount > 0) {
-      button.classList.add('active');
-    } else {
-      button.classList.remove('active');
+// 투표 피드백 토글 함수 (서버 연동)
+window.toggleVoteFeedback = async function(voteId, type, choice) {
+  try {
+    const voteItem = document.querySelector(`[data-vote-id="${voteId}"]`);
+    if (!voteItem) return;
+    
+    const voteChoice = choice || voteItem.getAttribute('data-choice') || voteId;
+    
+    const response = await fetch(`${API_BASE}/voting/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: currentSessionId,
+        voteId: voteChoice,
+        feedbackType: type,
+        userId: currentUserId
+      })
+    });
+    
+    if (response.ok) {
+      // 피드백 통계 업데이트
+      await updateVoteFeedback(voteId, voteChoice, type);
     }
+  } catch (error) {
+    console.error('Failed to submit vote feedback:', error);
   }
 };
 
-// 투표 피드백 데이터 로드
-function loadVoteFeedback() {
-  document.querySelectorAll('.vote-feedback-btn').forEach(btn => {
-    const onclick = btn.getAttribute('onclick');
-    const match = onclick.match(/toggleVoteFeedback\('([^']+)',\s*'([^']+)'\)/);
-    if (match) {
-      const voteId = match[1];
-      const type = match[2];
-      const key = `vote-feedback-${voteId}-${type}`;
-      const count = parseInt(localStorage.getItem(key) || '0');
+// 투표 피드백 통계 업데이트
+async function updateVoteFeedback(voteId, choice, type) {
+  try {
+    const response = await fetch(`${API_BASE}/voting/feedback/${currentSessionId}/${choice}`);
+    const data = await response.json();
+    
+    if (data.success && data.stats) {
+      const likeCount = document.getElementById(`like-${voteId}`);
+      const dislikeCount = document.getElementById(`dislike-${voteId}`);
       
-      const countElement = document.getElementById(`${type}-${voteId}`);
-      if (countElement) {
-        countElement.textContent = count;
+      if (likeCount) {
+        likeCount.textContent = data.stats.like || 0;
+      }
+      if (dislikeCount) {
+        dislikeCount.textContent = data.stats.dislike || 0;
       }
       
-      if (count > 0) {
-        btn.classList.add('active');
+      // 버튼 활성화 상태 업데이트
+      const button = event.target.closest('.vote-feedback-btn');
+      if (button) {
+        const allButtons = button.parentElement.querySelectorAll('.vote-feedback-btn');
+        allButtons.forEach(btn => btn.classList.remove('active'));
+        
+        if (type === 'like' && data.stats.like > 0) {
+          button.classList.add('active');
+        } else if (type === 'dislike' && data.stats.dislike > 0) {
+          button.classList.add('active');
+        }
       }
     }
-  });
+  } catch (error) {
+    console.error('Failed to update vote feedback:', error);
+  }
+}
+
+// 투표 피드백 데이터 로드 (서버에서)
+async function loadVoteFeedback() {
+  try {
+    const voteItems = document.querySelectorAll('.vote-item');
+    
+    for (const voteItem of voteItems) {
+      const voteId = voteItem.getAttribute('data-vote-id');
+      const choice = voteItem.getAttribute('data-choice') || voteId;
+      
+      if (!voteId) continue;
+      
+      const response = await fetch(`${API_BASE}/voting/feedback/${currentSessionId}/${choice}`);
+      const data = await response.json();
+      
+      if (data.success && data.stats) {
+        const likeCount = document.getElementById(`like-${voteId}`);
+        const dislikeCount = document.getElementById(`dislike-${voteId}`);
+        
+        if (likeCount) {
+          likeCount.textContent = data.stats.like || 0;
+        }
+        if (dislikeCount) {
+          dislikeCount.textContent = data.stats.dislike || 0;
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load vote feedback:', error);
+  }
 }
 
 // Textarea 자동 높이 조절
@@ -2496,10 +2958,42 @@ async function showPerformanceDashboard() {
     const statsResponse = await fetch(`${API_BASE}/performance/stats`);
     const statsData = await statsResponse.json();
     
+    // 사용량 통계 가져오기
+    const usageResponse = await fetch(`${API_BASE}/performance/usage`);
+    const usageData = await usageResponse.json();
+    
+    // 비용 통계 가져오기
+    const costResponse = await fetch(`${API_BASE}/performance/cost`);
+    const costData = await costResponse.json();
+    
+    // 성능 히스토리 가져오기
+    const historyResponse = await fetch(`${API_BASE}/performance/history?hours=24`);
+    const historyData = await historyResponse.json();
+    
+    // 성능 경고 가져오기
+    const alertsResponse = await fetch(`${API_BASE}/performance/alerts`);
+    const alertsData = await alertsResponse.json();
+    
     const content = document.getElementById('performanceContent');
     if (!content) return;
     
     let html = '<div class="performance-dashboard">';
+    
+    // 성능 경고 표시
+    if (alertsData.success && alertsData.alerts && alertsData.alerts.length > 0) {
+      html += '<div class="performance-alerts">';
+      html += '<h4>⚠️ 성능 경고</h4>';
+      alertsData.alerts.forEach(alert => {
+        const alertClass = alert.severity === 'error' ? 'alert-error' : 'alert-warning';
+        html += `
+          <div class="alert-item ${alertClass}">
+            <span class="alert-icon">${alert.severity === 'error' ? '🔴' : '⚠️'}</span>
+            <span class="alert-message">${alert.message}</span>
+          </div>
+        `;
+      });
+      html += '</div>';
+    }
     
     // 전체 요약
     if (summaryData.success && summaryData.summary && summaryData.summary.length > 0) {
@@ -2538,6 +3032,73 @@ async function showPerformanceDashboard() {
       html += '</div></div>';
     }
     
+    // 사용량 및 비용 통계
+    if (usageData.success && usageData.totalCalls > 0) {
+      html += '<div class="usage-stats">';
+      html += '<h4>💰 API 사용량 및 비용</h4>';
+      html += '<div class="usage-grid">';
+      html += `
+        <div class="usage-card">
+          <div class="usage-label">총 API 호출</div>
+          <div class="usage-value">${usageData.totalCalls.toLocaleString()}</div>
+        </div>
+        <div class="usage-card">
+          <div class="usage-label">총 토큰 사용</div>
+          <div class="usage-value">${usageData.totalTokens.toLocaleString()}</div>
+          <div class="usage-detail">입력: ${usageData.totalInputTokens.toLocaleString()} / 출력: ${usageData.totalOutputTokens.toLocaleString()}</div>
+        </div>
+        <div class="usage-card">
+          <div class="usage-label">예상 총 비용</div>
+          <div class="usage-value">$${usageData.totalCost.toFixed(4)}</div>
+        </div>
+        <div class="usage-card">
+          <div class="usage-label">평균 응답 시간</div>
+          <div class="usage-value">${usageData.avgResponseTime.toFixed(0)}ms</div>
+        </div>
+      `;
+      html += '</div></div>';
+      
+      // 비용 통계 상세
+      if (costData.success && costData.costStats && costData.costStats.length > 0) {
+        html += '<div class="cost-breakdown">';
+        html += '<h5>모델별 비용 상세</h5>';
+        html += '<div class="cost-table">';
+        html += '<table>';
+        html += '<thead><tr><th>AI</th><th>모델</th><th>비용</th><th>토큰</th><th>호출 수</th></tr></thead>';
+        html += '<tbody>';
+        costData.costStats.forEach(stat => {
+          html += `
+            <tr>
+              <td>${getAgentIcon(stat.provider)} ${stat.provider}</td>
+              <td>${stat.model}</td>
+              <td>$${stat.totalCost.toFixed(4)}</td>
+              <td>${stat.totalTokens.toLocaleString()}</td>
+              <td>${stat.callCount}</td>
+            </tr>
+          `;
+        });
+        html += '</tbody></table></div></div>';
+      }
+    }
+    
+    // 성능 히스토리 그래프
+    if (historyData.success && historyData.history && historyData.history.length > 0) {
+      html += '<div class="performance-history">';
+      html += '<h4>📊 성능 히스토리 (24시간)</h4>';
+      html += '<div class="chart-container">';
+      html += '<canvas id="performanceHistoryChart"></canvas>';
+      html += '</div></div>';
+    }
+    
+    // AI별 성능 비교 차트
+    if (summaryData.success && summaryData.summary && summaryData.summary.length > 0) {
+      html += '<div class="performance-comparison">';
+      html += '<h4>📊 AI별 성능 비교</h4>';
+      html += '<div class="chart-container">';
+      html += '<canvas id="performanceComparisonChart"></canvas>';
+      html += '</div></div>';
+    }
+    
     // 상세 통계
     if (statsData.success && statsData.stats && statsData.stats.length > 0) {
       html += '<div class="performance-details">';
@@ -2567,10 +3128,187 @@ async function showPerformanceDashboard() {
     html += '</div>';
     content.innerHTML = html;
     openModal('performanceModal');
+    
+    // 차트 렌더링 (Chart.js 사용)
+    if (typeof Chart !== 'undefined') {
+      // 성능 히스토리 그래프
+      if (historyData.success && historyData.history && historyData.history.length > 0) {
+        renderPerformanceHistoryChart(historyData.history);
+      }
+      
+      // AI별 성능 비교 차트
+      if (summaryData.success && summaryData.summary && summaryData.summary.length > 0) {
+        renderPerformanceComparisonChart(summaryData.summary);
+      }
+    } else {
+      console.warn('Chart.js가 로드되지 않았습니다. 그래프를 표시할 수 없습니다.');
+    }
   } catch (error) {
     console.error('Failed to load performance dashboard:', error);
     alert('성능 대시보드를 불러오는 중 오류가 발생했습니다.');
   }
+}
+
+// 성능 히스토리 그래프 렌더링
+function renderPerformanceHistoryChart(history) {
+  const ctx = document.getElementById('performanceHistoryChart');
+  if (!ctx) return;
+  
+  // 시간별로 그룹화
+  const timeGroups = {};
+  history.forEach(item => {
+    const time = new Date(item.hourTimestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+    if (!timeGroups[time]) {
+      timeGroups[time] = { responseTime: [], successRate: [] };
+    }
+    timeGroups[time].responseTime.push(item.responseTime);
+    timeGroups[time].successRate.push(item.successRate);
+  });
+  
+  const labels = Object.keys(timeGroups).sort();
+  const avgResponseTime = labels.map(time => {
+    const times = timeGroups[time].responseTime;
+    return times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : 0;
+  });
+  const avgSuccessRate = labels.map(time => {
+    const rates = timeGroups[time].successRate;
+    return rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
+  });
+  
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: '평균 응답 시간 (ms)',
+          data: avgResponseTime,
+          borderColor: 'rgb(102, 126, 234)',
+          backgroundColor: 'rgba(102, 126, 234, 0.1)',
+          yAxisID: 'y',
+          tension: 0.4
+        },
+        {
+          label: '성공률 (%)',
+          data: avgSuccessRate.map(r => r * 100),
+          borderColor: 'rgb(76, 175, 80)',
+          backgroundColor: 'rgba(76, 175, 80, 0.1)',
+          yAxisID: 'y1',
+          tension: 0.4
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
+      scales: {
+        y: {
+          type: 'linear',
+          display: true,
+          position: 'left',
+          title: {
+            display: true,
+            text: '응답 시간 (ms)'
+          }
+        },
+        y1: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          title: {
+            display: true,
+            text: '성공률 (%)'
+          },
+          grid: {
+            drawOnChartArea: false,
+          },
+        }
+      }
+    }
+  });
+}
+
+// AI별 성능 비교 차트 렌더링
+function renderPerformanceComparisonChart(summary) {
+  const ctx = document.getElementById('performanceComparisonChart');
+  if (!ctx) return;
+  
+  const providers = summary.map(s => s.provider);
+  const successRates = summary.map(s => (s.avgSuccessRate || 0) * 100);
+  const responseTimes = summary.map(s => s.avgResponseTime || 0);
+  const totalCalls = summary.map(s => s.totalCalls || 0);
+  
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: providers,
+      datasets: [
+        {
+          label: '성공률 (%)',
+          data: successRates,
+          backgroundColor: 'rgba(76, 175, 80, 0.6)',
+          borderColor: 'rgb(76, 175, 80)',
+          borderWidth: 1,
+          yAxisID: 'y'
+        },
+        {
+          label: '평균 응답 시간 (ms)',
+          data: responseTimes,
+          backgroundColor: 'rgba(102, 126, 234, 0.6)',
+          borderColor: 'rgb(102, 126, 234)',
+          borderWidth: 1,
+          yAxisID: 'y1',
+          type: 'line'
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false,
+      },
+      scales: {
+        y: {
+          type: 'linear',
+          display: true,
+          position: 'left',
+          title: {
+            display: true,
+            text: '성공률 (%)'
+          },
+          max: 100
+        },
+        y1: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          title: {
+            display: true,
+            text: '응답 시간 (ms)'
+          },
+          grid: {
+            drawOnChartArea: false,
+          },
+        }
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            afterLabel: function(context) {
+              const index = context.dataIndex;
+              return `총 호출: ${totalCalls[index]}`;
+            }
+          }
+        }
+      }
+    }
+  });
 }
 
 // ==================== 음성 입출력 기능 ====================

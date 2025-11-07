@@ -6,6 +6,45 @@
 import Database from 'better-sqlite3';
 import { logger } from './logger.js';
 
+// 모델별 토큰 비용 (USD per 1M tokens) - 2024년 기준
+const MODEL_PRICING = {
+  // OpenAI
+  'gpt-5': { input: 2.50, output: 10.00 },
+  'gpt-4-turbo': { input: 10.00, output: 30.00 },
+  'gpt-4': { input: 30.00, output: 60.00 },
+  'gpt-3.5-turbo': { input: 0.50, output: 1.50 },
+  
+  // Anthropic Claude
+  'claude-sonnet-4-5-20250929': { input: 3.00, output: 15.00 },
+  'claude-3-5-sonnet-20240620': { input: 3.00, output: 15.00 },
+  'claude-3-opus': { input: 15.00, output: 75.00 },
+  'claude-3-sonnet': { input: 3.00, output: 15.00 },
+  'claude-3-haiku': { input: 0.25, output: 1.25 },
+  
+  // Google Gemini
+  'gemini-2.5-flash': { input: 0.075, output: 0.30 },
+  'gemini-2.0-flash-exp': { input: 0.075, output: 0.30 },
+  'gemini-pro': { input: 0.50, output: 1.50 },
+  
+  // xAI Grok
+  'grok-4-fast': { input: 0.50, output: 2.00 },
+  'grok-beta': { input: 0.50, output: 2.00 },
+  'grok-2': { input: 0.50, output: 2.00 },
+};
+
+/**
+ * 토큰 비용 계산
+ */
+function calculateCost(model, inputTokens, outputTokens) {
+  const pricing = MODEL_PRICING[model];
+  if (!pricing) {
+    // 기본값: 평균 비용 사용
+    return (inputTokens * 1.0 + outputTokens * 5.0) / 1000000;
+  }
+  
+  return (inputTokens * pricing.input + outputTokens * pricing.output) / 1000000;
+}
+
 export class PerformanceMonitor {
   constructor(dbPath) {
     this.db = new Database(dbPath);
@@ -41,9 +80,9 @@ export class PerformanceMonitor {
   }
 
   /**
-   * AI 호출 완료 및 성능 기록
+   * AI 호출 완료 및 성능 기록 (토큰 사용량 포함)
    */
-  recordSuccess(tracking, responseTime = null) {
+  recordSuccess(tracking, responseTime = null, usage = null, model = null) {
     const actualResponseTime = responseTime || (Date.now() - tracking.startTime);
     const providerName = tracking.provider;
     const taskType = tracking.taskType || 'general';
@@ -81,10 +120,29 @@ export class PerformanceMonitor {
         `).run(providerName, taskType, actualResponseTime);
       }
 
+      // API 사용량 상세 기록
+      if (usage && model) {
+        const inputTokens = usage.inputTokens || 0;
+        const outputTokens = usage.outputTokens || 0;
+        const totalTokens = inputTokens + outputTokens;
+        const estimatedCost = calculateCost(model, inputTokens, outputTokens);
+
+        this.db.prepare(`
+          INSERT INTO api_usage 
+          (ai_provider, model, task_type, input_tokens, output_tokens, total_tokens, estimated_cost, response_time, success)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        `).run(providerName, model, taskType, inputTokens, outputTokens, totalTokens, estimatedCost, actualResponseTime);
+      }
+
+      // 성능 히스토리 기록 (시간별 집계)
+      this.recordPerformanceHistory(providerName, taskType, actualResponseTime, true);
+
       logger.debug('Performance recorded', {
         provider: providerName,
         taskType,
         responseTime: actualResponseTime,
+        tokens: usage ? (usage.inputTokens + usage.outputTokens) : null,
+        cost: usage && model ? calculateCost(model, usage.inputTokens || 0, usage.outputTokens || 0) : null,
         success: true
       });
     } catch (error) {
@@ -98,9 +156,10 @@ export class PerformanceMonitor {
   /**
    * AI 호출 실패 기록
    */
-  recordFailure(tracking, error = null) {
+  recordFailure(tracking, error = null, usage = null, model = null) {
     const providerName = tracking.provider;
     const taskType = tracking.taskType || 'general';
+    const responseTime = Date.now() - tracking.startTime;
 
     try {
       const existing = this.db.prepare(`
@@ -130,6 +189,23 @@ export class PerformanceMonitor {
         `).run(providerName, taskType);
       }
 
+      // API 사용량 기록 (실패한 경우도 기록)
+      if (usage && model) {
+        const inputTokens = usage.inputTokens || 0;
+        const outputTokens = usage.outputTokens || 0;
+        const totalTokens = inputTokens + outputTokens;
+        const estimatedCost = calculateCost(model, inputTokens, outputTokens);
+
+        this.db.prepare(`
+          INSERT INTO api_usage 
+          (ai_provider, model, task_type, input_tokens, output_tokens, total_tokens, estimated_cost, response_time, success, error_message)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+        `).run(providerName, model, taskType, inputTokens, outputTokens, totalTokens, estimatedCost, responseTime, error?.message || 'Unknown error');
+      }
+
+      // 성능 히스토리 기록
+      this.recordPerformanceHistory(providerName, taskType, responseTime, false);
+
       logger.debug('Failure recorded', {
         provider: providerName,
         taskType,
@@ -140,6 +216,47 @@ export class PerformanceMonitor {
         provider: providerName,
         taskType
       });
+    }
+  }
+
+  /**
+   * 성능 히스토리 기록 (시간별 집계)
+   */
+  recordPerformanceHistory(providerName, taskType, responseTime, success) {
+    try {
+      const now = new Date();
+      const hourTimestamp = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0, 0).toISOString();
+
+      const existing = this.db.prepare(`
+        SELECT * FROM performance_history 
+        WHERE ai_provider = ? AND task_type = ? AND hour_timestamp = ?
+      `).get(providerName, taskType || 'general', hourTimestamp);
+
+      if (existing) {
+        const totalCalls = existing.total_calls + 1;
+        const currentAvgTime = existing.response_time || 0;
+        const newAvgTime = ((currentAvgTime * existing.total_calls) + responseTime) / totalCalls;
+        const currentSuccessRate = existing.success_rate || 0;
+        const newSuccessRate = ((currentSuccessRate * existing.total_calls) + (success ? 1 : 0)) / totalCalls;
+
+        this.db.prepare(`
+          UPDATE performance_history 
+          SET 
+            response_time = ?,
+            success_rate = ?,
+            total_calls = ?,
+            created_at = CURRENT_TIMESTAMP
+          WHERE ai_provider = ? AND task_type = ? AND hour_timestamp = ?
+        `).run(newAvgTime, newSuccessRate, totalCalls, providerName, taskType || 'general', hourTimestamp);
+      } else {
+        this.db.prepare(`
+          INSERT INTO performance_history 
+          (ai_provider, task_type, response_time, success_rate, total_calls, hour_timestamp)
+          VALUES (?, ?, ?, ?, 1, ?)
+        `).run(providerName, taskType || 'general', responseTime, success ? 1.0 : 0.0, hourTimestamp);
+      }
+    } catch (error) {
+      logger.error('Failed to record performance history', error);
     }
   }
 

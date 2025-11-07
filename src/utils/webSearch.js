@@ -262,8 +262,126 @@ export class WebSearchService {
     // 4. 관련성 낮은 결과 필터링 (점수가 너무 낮으면 제외)
     const filteredResults = scoredResults.filter(result => result.totalScore > 0.1);
 
-    // 5. 최대 개수 제한 (상위 결과만 반환)
-    return filteredResults.slice(0, 10).map(({ relevanceScore, reliabilityScore, totalScore, ...result }) => result);
+    // 5. 최대 개수 제한 (상위 결과만 반환) - 점수 정보 유지
+    return filteredResults.slice(0, 10);
+  }
+
+  /**
+   * 검색 결과 요약 생성 (AI 사용)
+   */
+  async summarizeSearchResults(query, results, orchestrator) {
+    if (!results || results.length === 0) {
+      return null;
+    }
+
+    try {
+      // 캐시 확인
+      const db = getDatabase(this.dbPath);
+      const cached = db.prepare(`
+        SELECT summary FROM search_summary_cache
+        WHERE query = ? AND expires_at > datetime('now')
+        ORDER BY created_at DESC
+        LIMIT 1
+      `).get(query);
+
+      if (cached) {
+        return cached.summary;
+      }
+
+      // AI로 요약 생성
+      if (!orchestrator) {
+        return null;
+      }
+
+      const resultsText = results.map((r, i) => 
+        `[${i + 1}] ${r.title}\n${r.snippet || ''}\n출처: ${r.link}`
+      ).join('\n\n');
+
+      const summaryPrompt = `다음 검색 결과들을 요약해주세요. 핵심 내용만 간결하게 정리해주세요.\n\n검색어: ${query}\n\n검색 결과:\n${resultsText}`;
+
+      // Meta AI를 사용하여 요약
+      const brain = await orchestrator.selectBrain();
+      const summaryResponse = await brain.chat([
+        { role: 'user', content: summaryPrompt }
+      ], { maxTokens: 500 });
+
+      const summary = summaryResponse.content;
+
+      // 캐시에 저장 (24시간 유효)
+      const expiresAt = new Date();
+      expiresAt.setHours(expiresAt.getHours() + 24);
+      
+      db.prepare(`
+        INSERT INTO search_summary_cache (query, summary, expires_at)
+        VALUES (?, ?, ?)
+      `).run(query, summary, expiresAt.toISOString());
+
+      return summary;
+    } catch (error) {
+      logger.error('Failed to summarize search results', error, { query });
+      return null;
+    }
+  }
+
+  /**
+   * 검색 결과 피드백 저장
+   */
+  saveSearchFeedback(query, resultUrl, feedbackType, userId = null) {
+    try {
+      const db = getDatabase(this.dbPath);
+      db.prepare(`
+        INSERT INTO search_feedback (query, result_url, feedback_type, user_id)
+        VALUES (?, ?, ?, ?)
+      `).run(query, resultUrl, feedbackType, userId);
+      
+      logger.debug('Search feedback saved', { query, resultUrl, feedbackType });
+    } catch (error) {
+      logger.error('Failed to save search feedback', error);
+    }
+  }
+
+  /**
+   * 검색 결과 피드백 통계 조회
+   */
+  getSearchFeedbackStats(resultUrl) {
+    try {
+      const db = getDatabase(this.dbPath);
+      const stats = db.prepare(`
+        SELECT 
+          feedback_type,
+          COUNT(*) as count
+        FROM search_feedback
+        WHERE result_url = ?
+        GROUP BY feedback_type
+      `).all(resultUrl);
+
+      const result = { useful: 0, notUseful: 0 };
+      stats.forEach(stat => {
+        if (stat.feedback_type === 'useful') {
+          result.useful = stat.count;
+        } else if (stat.feedback_type === 'not_useful') {
+          result.notUseful = stat.count;
+        }
+      });
+
+      return result;
+    } catch (error) {
+      logger.error('Failed to get search feedback stats', error);
+      return { useful: 0, notUseful: 0 };
+    }
+  }
+
+  /**
+   * 검색 결과 관련성 점수 반환 (이미 계산된 경우)
+   */
+  getRelevanceScore(result, query) {
+    if (result.relevanceScore !== undefined) {
+      return result.relevanceScore;
+    }
+    
+    // 점수가 없으면 계산
+    const queryKeywords = this.extractKeywords(query);
+    return this.calculateRelevanceScore(result, queryKeywords);
   }
 
   /**

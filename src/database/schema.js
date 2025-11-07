@@ -111,6 +111,38 @@ export function initializeDatabase(dbPath = './data/athena.db') {
     )
   `);
 
+  // API 사용량 상세 추적 (토큰 수, 비용 등)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS api_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ai_provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      task_type TEXT,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      total_tokens INTEGER DEFAULT 0,
+      estimated_cost REAL DEFAULT 0.0,
+      response_time INTEGER DEFAULT 0,
+      success INTEGER DEFAULT 1,
+      error_message TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // 성능 히스토리 (시간별 추적)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS performance_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ai_provider TEXT NOT NULL,
+      task_type TEXT,
+      response_time INTEGER DEFAULT 0,
+      success_rate REAL DEFAULT 0.0,
+      total_calls INTEGER DEFAULT 0,
+      hour_timestamp DATETIME NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // 세션 관리
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -124,6 +156,42 @@ export function initializeDatabase(dbPath = './data/athena.db') {
     )
   `);
 
+  // 검색 결과 피드백
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS search_feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      query TEXT NOT NULL,
+      result_url TEXT NOT NULL,
+      feedback_type TEXT NOT NULL, -- 'useful' or 'not_useful'
+      user_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Debate/Voting 피드백
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS debate_feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      debate_id TEXT NOT NULL, -- debate round + agent 조합 식별자
+      feedback_type TEXT NOT NULL, -- 'like' or 'dislike'
+      user_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Voting 피드백
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS voting_feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      vote_id TEXT NOT NULL, -- vote choice 식별자
+      feedback_type TEXT NOT NULL, -- 'like' or 'dislike'
+      user_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // 인덱스 생성
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_short_term_session ON short_term_memory(session_id);
@@ -132,12 +200,12 @@ export function initializeDatabase(dbPath = './data/athena.db') {
     CREATE INDEX IF NOT EXISTS idx_long_term_category ON long_term_memory(category);
     CREATE INDEX IF NOT EXISTS idx_decision_session ON decision_log(session_id);
     CREATE INDEX IF NOT EXISTS idx_search_query ON search_cache(query);
+    CREATE INDEX IF NOT EXISTS idx_api_usage_provider ON api_usage(ai_provider);
+    CREATE INDEX IF NOT EXISTS idx_api_usage_created ON api_usage(created_at);
+    CREATE INDEX IF NOT EXISTS idx_performance_history_provider ON performance_history(ai_provider);
+    CREATE INDEX IF NOT EXISTS idx_performance_history_timestamp ON performance_history(hour_timestamp);
+    CREATE INDEX IF NOT EXISTS idx_search_feedback_query ON search_feedback(query);
+    CREATE INDEX IF NOT EXISTS idx_search_summary_query ON search_summary_cache(query);
+    CREATE INDEX IF NOT EXISTS idx_debate_feedback_session ON debate_feedback(session_id);
+    CREATE INDEX IF NOT EXISTS idx_voting_feedback_session ON voting_feedback(session_id);
   `);
-
-  console.log('Database initialized successfully');
-  return db;
-}
-
-export function getDatabase(dbPath = './data/athena.db') {
-  return new Database(dbPath);
-}
