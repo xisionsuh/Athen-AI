@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { AIProvider } from './base.js';
 
 export class OpenAIProvider extends AIProvider {
-  constructor(apiKey, model = 'gpt-4-turbo-preview') {
+  constructor(apiKey, model = 'gpt-5') {
     super('ChatGPT', apiKey);
     this.client = new OpenAI({ apiKey });
     this.model = model;
@@ -10,12 +10,21 @@ export class OpenAIProvider extends AIProvider {
 
   async chat(messages, options = {}) {
     try {
-      const response = await this.client.chat.completions.create({
+      const requestOptions = {
         model: this.model,
         messages: messages,
-        max_tokens: options.maxTokens || 4096,
-        temperature: options.temperature || 0.7,
-      });
+      };
+
+      // gpt-5 모델은 max_completion_tokens 사용, temperature는 기본값만 지원
+      if (this.model.startsWith('gpt-5') || this.model.includes('gpt-5')) {
+        requestOptions.max_completion_tokens = options.maxTokens || 4096;
+        // gpt-5는 temperature를 지원하지 않으므로 제외
+      } else {
+        requestOptions.max_tokens = options.maxTokens || 4096;
+        requestOptions.temperature = options.temperature || 0.7;
+      }
+
+      const response = await this.client.chat.completions.create(requestOptions);
 
       return {
         content: response.choices[0].message.content,
@@ -34,13 +43,22 @@ export class OpenAIProvider extends AIProvider {
 
   async streamChat(messages, options = {}) {
     try {
-      const stream = await this.client.chat.completions.create({
+      const requestOptions = {
         model: this.model,
         messages: messages,
-        max_tokens: options.maxTokens || 4096,
-        temperature: options.temperature || 0.7,
         stream: true,
-      });
+      };
+
+      // gpt-5 모델은 max_completion_tokens 사용, temperature는 기본값만 지원
+      if (this.model.startsWith('gpt-5') || this.model.includes('gpt-5')) {
+        requestOptions.max_completion_tokens = options.maxTokens || 4096;
+        // gpt-5는 temperature를 지원하지 않으므로 제외
+      } else {
+        requestOptions.max_tokens = options.maxTokens || 4096;
+        requestOptions.temperature = options.temperature || 0.7;
+      }
+
+      const stream = await this.client.chat.completions.create(requestOptions);
 
       return stream;
     } catch (error) {

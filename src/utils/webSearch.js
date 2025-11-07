@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { getDatabase } from '../database/schema.js';
+import { logger } from './logger.js';
 
 export class WebSearchService {
   constructor(config) {
@@ -15,9 +16,10 @@ export class WebSearchService {
   async searchGoogle(query, numResults = 5) {
     try {
       if (!this.apiKey || !this.searchEngineId) {
-        console.error('⚠️ Google Search API 키가 설정되지 않았습니다.');
-        console.error('   SEARCH_API_KEY:', this.apiKey ? '설정됨' : '없음');
-        console.error('   SEARCH_ENGINE_ID:', this.searchEngineId ? '설정됨' : '없음');
+        logger.warn('Google Search API 키가 설정되지 않았습니다.', {
+          hasApiKey: !!this.apiKey,
+          hasSearchEngineId: !!this.searchEngineId
+        });
         return [];
       }
 
@@ -29,7 +31,7 @@ export class WebSearchService {
         num: numResults
       };
 
-      console.log('🔍 Google 검색 실행:', query);
+      logger.debug('Google 검색 실행', { query, numResults });
       const response = await axios.get(url, { params });
 
       const results = response.data.items?.map(item => ({
@@ -39,17 +41,13 @@ export class WebSearchService {
         source: 'Google'
       })) || [];
 
-      console.log('✅ Google 검색 결과:', results.length, '개');
+      logger.info('Google 검색 결과', { count: results.length, query });
       // 캐시에 저장
       this.cacheSearchResults(query, results);
 
       return results;
     } catch (error) {
-      console.error('❌ Google search error:', error.message);
-      if (error.response) {
-        console.error('   응답 상태:', error.response.status);
-        console.error('   응답 데이터:', error.response.data);
-      }
+      logger.error('Google search error', error, { query });
       return [];
     }
   }
@@ -88,7 +86,7 @@ export class WebSearchService {
 
       return results;
     } catch (error) {
-      console.error('DuckDuckGo search error:', error);
+      logger.error('DuckDuckGo search error', error, { query });
       return [];
     }
   }
@@ -105,7 +103,7 @@ export class WebSearchService {
       `);
       stmt.run(query, JSON.stringify(results), 'web_search');
     } catch (error) {
-      console.error('Cache error:', error);
+      logger.error('Cache error', error, { query });
     }
   }
 
@@ -129,7 +127,7 @@ export class WebSearchService {
       }
       return null;
     } catch (error) {
-      console.error('Cache retrieval error:', error);
+      logger.error('Cache retrieval error', error, { query });
       return null;
     }
   }
@@ -167,7 +165,7 @@ export class WebSearchService {
         success: true
       };
     } catch (error) {
-      console.error(`Failed to fetch ${url}:`, error.message);
+      logger.error(`Failed to fetch ${url}`, error);
       return {
         url,
         error: error.message,
@@ -218,26 +216,201 @@ export class WebSearchService {
 
       return results;
     } catch (error) {
-      console.error('YouTube search error:', error);
+      logger.error('YouTube search error', error, { query });
       return [];
     }
   }
 
   /**
-   * 통합 검색 함수
+   * 검색 결과 품질 개선: 관련성 필터링, 중복 제거, 신뢰도 기반 정렬
+   */
+  improveSearchResults(results, query) {
+    if (!results || results.length === 0) {
+      return [];
+    }
+
+    // 1. 중복 제거 (URL 기준)
+    const uniqueResults = [];
+    const seenUrls = new Set();
+    
+    for (const result of results) {
+      const normalizedUrl = this.normalizeUrl(result.link);
+      if (!seenUrls.has(normalizedUrl)) {
+        seenUrls.add(normalizedUrl);
+        uniqueResults.push(result);
+      }
+    }
+
+    // 2. 관련성 점수 계산
+    const queryKeywords = this.extractKeywords(query);
+    const scoredResults = uniqueResults.map(result => {
+      const relevanceScore = this.calculateRelevanceScore(result, queryKeywords);
+      const reliabilityScore = this.getReliabilityScore(result.link);
+      const totalScore = relevanceScore * 0.7 + reliabilityScore * 0.3; // 관련성 70%, 신뢰도 30%
+      
+      return {
+        ...result,
+        relevanceScore,
+        reliabilityScore,
+        totalScore
+      };
+    });
+
+    // 3. 점수 기준 정렬 (높은 점수 순)
+    scoredResults.sort((a, b) => b.totalScore - a.totalScore);
+
+    // 4. 관련성 낮은 결과 필터링 (점수가 너무 낮으면 제외)
+    const filteredResults = scoredResults.filter(result => result.totalScore > 0.1);
+
+    // 5. 최대 개수 제한 (상위 결과만 반환)
+    return filteredResults.slice(0, 10).map(({ relevanceScore, reliabilityScore, totalScore, ...result }) => result);
+  }
+
+  /**
+   * URL 정규화 (중복 제거용)
+   */
+  normalizeUrl(url) {
+    if (!url) return '';
+    
+    try {
+      const urlObj = new URL(url);
+      // 프로토콜, www 제거하여 비교
+      let normalized = urlObj.hostname.replace(/^www\./, '') + urlObj.pathname;
+      // 쿼리 파라미터 정렬하여 비교
+      if (urlObj.search) {
+        const params = new URLSearchParams(urlObj.search);
+        const sortedParams = Array.from(params.entries()).sort();
+        if (sortedParams.length > 0) {
+          normalized += '?' + sortedParams.map(([k, v]) => `${k}=${v}`).join('&');
+        }
+      }
+      return normalized.toLowerCase();
+    } catch (error) {
+      return url.toLowerCase();
+    }
+  }
+
+  /**
+   * 쿼리에서 키워드 추출
+   */
+  extractKeywords(query) {
+    // 불용어 제거
+    const stopWords = ['은', '는', '이', '가', '을', '를', '의', '에', '에서', '와', '과', '도', '만', '까지', '부터',
+                      'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'];
+    
+    const words = query.toLowerCase()
+      .replace(/[^\w\s가-힣]/g, ' ')
+      .split(/\s+/)
+      .filter(word => word.length > 1 && !stopWords.includes(word));
+    
+    return words;
+  }
+
+  /**
+   * 검색 결과의 관련성 점수 계산 (0-1)
+   */
+  calculateRelevanceScore(result, queryKeywords) {
+    if (!queryKeywords || queryKeywords.length === 0) {
+      return 0.5; // 기본 점수
+    }
+
+    const title = (result.title || '').toLowerCase();
+    const snippet = (result.snippet || '').toLowerCase();
+    const link = (result.link || '').toLowerCase();
+    const text = `${title} ${snippet} ${link}`;
+
+    let score = 0;
+    let matchedKeywords = 0;
+
+    for (const keyword of queryKeywords) {
+      if (text.includes(keyword)) {
+        matchedKeywords++;
+        // 제목에 있으면 가중치 높음
+        if (title.includes(keyword)) {
+          score += 0.3;
+        }
+        // 스니펫에 있으면 중간 가중치
+        else if (snippet.includes(keyword)) {
+          score += 0.2;
+        }
+        // 링크에만 있으면 낮은 가중치
+        else {
+          score += 0.1;
+        }
+      }
+    }
+
+    // 매칭된 키워드 비율
+    const matchRatio = matchedKeywords / queryKeywords.length;
+    
+    // 최종 점수: 매칭 점수와 매칭 비율의 평균
+    const finalScore = (score + matchRatio) / 2;
+    
+    return Math.min(1, finalScore);
+  }
+
+  /**
+   * 신뢰도 점수 계산 (0-1)
+   */
+  getReliabilityScore(url) {
+    const reliability = this.getSourceReliability(url);
+    
+    if (reliability.includes('높음')) {
+      return 1.0;
+    } else if (reliability.includes('보통')) {
+      return 0.6;
+    } else if (reliability.includes('낮음')) {
+      return 0.3;
+    }
+    
+    return 0.5; // 기본값
+  }
+
+  /**
+   * 검색 쿼리 최적화
+   */
+  optimizeQuery(query) {
+    // 불필요한 단어 제거
+    const stopWords = ['어떻게', '무엇', '어디', '언제', '누가', '왜', 'how', 'what', 'where', 'when', 'who', 'why'];
+    
+    // 쿼리 정리
+    let optimized = query.trim();
+    
+    // 불용어 제거
+    const words = optimized.split(/\s+/).filter(word => {
+      const wordLower = word.toLowerCase();
+      return !stopWords.some(stopWord => wordLower === stopWord.toLowerCase());
+    });
+    
+    optimized = words.join(' ');
+    
+    // 연속된 공백 제거
+    optimized = optimized.replace(/\s+/g, ' ');
+    
+    return optimized.trim() || query; // 최적화 결과가 비어있으면 원본 반환
+  }
+
+  /**
+   * 통합 검색 함수 (개선된 버전)
    */
   async search(query, options = {}) {
     const numResults = options.numResults || 5;
     const useCache = options.useCache !== false;
     const searchType = options.type || 'web'; // 'web' or 'youtube'
+    const improveResults = options.improveResults !== false; // 기본값: true
+
+    // 검색 쿼리 최적화
+    const optimizedQuery = this.optimizeQuery(query);
 
     // 캐시 확인
     if (useCache) {
-      const cacheKey = searchType === 'youtube' ? `youtube:${query}` : query;
+      const cacheKey = searchType === 'youtube' ? `youtube:${optimizedQuery}` : optimizedQuery;
       const cached = this.getCachedResults(cacheKey);
       if (cached) {
+        // 캐시된 결과도 품질 개선 적용
+        const improvedResults = improveResults ? this.improveSearchResults(cached, query) : cached;
         return {
-          results: cached,
+          results: improvedResults,
           source: 'cache'
         };
       }
@@ -245,9 +418,10 @@ export class WebSearchService {
 
     // YouTube 검색인 경우
     if (searchType === 'youtube') {
-      const results = await this.searchYouTube(query, numResults);
+      const results = await this.searchYouTube(optimizedQuery, numResults * 2); // 더 많이 가져와서 필터링
+      const improvedResults = improveResults ? this.improveSearchResults(results, query) : results;
       return {
-        results,
+        results: improvedResults.slice(0, numResults),
         source: 'youtube'
       };
     }
@@ -255,13 +429,16 @@ export class WebSearchService {
     // 일반 웹 검색
     let results;
     if (this.apiKey && this.searchEngineId) {
-      results = await this.searchGoogle(query, numResults);
+      results = await this.searchGoogle(optimizedQuery, numResults * 2); // 더 많이 가져와서 필터링
     } else {
-      results = await this.searchDuckDuckGo(query, numResults);
+      results = await this.searchDuckDuckGo(optimizedQuery, numResults * 2);
     }
 
+    // 검색 결과 품질 개선
+    const improvedResults = improveResults ? this.improveSearchResults(results, query) : results;
+
     return {
-      results,
+      results: improvedResults.slice(0, numResults),
       source: 'web'
     };
   }
@@ -454,7 +631,7 @@ export class WebSearchService {
       // YouTube Data API v3를 사용하여 비디오 정보 가져오기
       // API 키가 없으면 웹 스크래핑 시도
       if (!this.apiKey) {
-        console.log('⚠️ YouTube Data API 키가 없어 웹 스크래핑을 시도합니다.');
+        logger.debug('YouTube Data API 키가 없어 웹 스크래핑을 시도합니다.', { videoId });
         return await this.fetchYouTubeVideoInfo(videoId);
       }
 
@@ -485,7 +662,7 @@ export class WebSearchService {
       
       return null;
     } catch (error) {
-      console.error('YouTube Data API error:', error.message);
+      logger.error('YouTube Data API error', error, { videoId });
       // API 실패 시 웹 스크래핑 시도
       return await this.fetchYouTubeVideoInfo(videoId);
     }
@@ -522,7 +699,7 @@ export class WebSearchService {
         link: url
       };
     } catch (error) {
-      console.error('YouTube 웹 스크래핑 error:', error.message);
+      logger.error('YouTube 웹 스크래핑 error', error, { videoId });
       return null;
     }
   }
@@ -542,6 +719,9 @@ export class WebSearchService {
   /**
    * 검색 결과를 AI가 이해하기 쉬운 형태로 포맷팅
    */
+  /**
+   * 검색 결과를 AI 프롬프트용으로 포맷팅
+   */
   formatResultsForAI(searchResults) {
     if (!searchResults || searchResults.length === 0) {
       return '';
@@ -557,5 +737,54 @@ export class WebSearchService {
 출처: ${link}
 내용: ${snippet}`;
     }).join('\n\n');
+  }
+
+  /**
+   * 출처의 신뢰도 판단
+   */
+  getSourceReliability(url) {
+    if (!url) return '보통';
+    
+    const urlLower = url.toLowerCase();
+    
+    // 공식 사이트
+    if (urlLower.includes('.gov') || urlLower.includes('.go.kr')) {
+      return '높음 (공식)';
+    }
+    
+    // 뉴스 사이트
+    if (urlLower.includes('news.') || urlLower.includes('.news') || 
+        urlLower.includes('bbc') || urlLower.includes('cnn') || 
+        urlLower.includes('reuters') || urlLower.includes('ap.org') ||
+        urlLower.includes('ytn') || urlLower.includes('sbs') || 
+        urlLower.includes('kbs') || urlLower.includes('mbc')) {
+      return '높음 (뉴스)';
+    }
+    
+    // 학술/연구 사이트
+    if (urlLower.includes('.edu') || urlLower.includes('.ac.kr') ||
+        urlLower.includes('scholar') || urlLower.includes('research') ||
+        urlLower.includes('pubmed') || urlLower.includes('arxiv')) {
+      return '높음 (학술)';
+    }
+    
+    // 위키피디아
+    if (urlLower.includes('wikipedia')) {
+      return '보통 (위키)';
+    }
+    
+    // YouTube
+    if (urlLower.includes('youtube') || urlLower.includes('youtu.be')) {
+      return '보통 (YouTube)';
+    }
+    
+    // 블로그/포럼
+    if (urlLower.includes('blog') || urlLower.includes('tistory') ||
+        urlLower.includes('naver.com/blog') || urlLower.includes('medium') ||
+        urlLower.includes('reddit') || urlLower.includes('stackoverflow')) {
+      return '낮음 (블로그/포럼)';
+    }
+    
+    return '보통';
   }
 }

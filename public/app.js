@@ -15,6 +15,23 @@ const sessionsList = document.getElementById('sessionsList');
 const memoryBtn = document.getElementById('memoryBtn');
 const memoryModal = document.getElementById('memoryModal');
 const decisionLogModal = document.getElementById('decisionLogModal');
+const performanceBtn = document.getElementById('performanceBtn');
+const performanceModal = document.getElementById('performanceModal');
+const voiceInputBtn = document.getElementById('voiceInputBtn');
+const voiceIcon = document.getElementById('voiceIcon');
+
+// 음성 관련 변수
+let recognition = null;
+let isListening = false;
+let speechSynthesis = window.speechSynthesis;
+let currentUtterance = null;
+let voiceSettings = {
+  enabled: false,
+  language: 'ko-KR',
+  rate: 1.0,
+  pitch: 1.0,
+  volume: 1.0
+};
 
 // 로그인 체크
 async function checkLogin() {
@@ -28,11 +45,11 @@ async function checkLogin() {
     if (data.authenticated && data.user) {
       // 서버 세션에 로그인 정보가 있음
       userId = data.user.id;
-      const currentUserElement = document.getElementById('currentUser');
-      if (currentUserElement) {
+  const currentUserElement = document.getElementById('currentUser');
+  if (currentUserElement) {
         currentUserElement.textContent = `👤 ${data.user.name}`;
-      }
-      return true;
+  }
+  return true;
     }
   } catch (error) {
     console.error('Auth status check failed:', error);
@@ -83,13 +100,56 @@ document.addEventListener('DOMContentLoaded', async () => {
     await window.loadSession(latestSession.id);
   } else {
     // 세션이 없으면 새로 생성
-    await createNewSession();
+  await createNewSession();
   }
 
   // 이벤트 리스너
   chatForm.addEventListener('submit', handleSendMessage);
   newChatBtn.addEventListener('click', createNewSession);
   memoryBtn.addEventListener('click', () => openModal('memoryModal'));
+  if (performanceBtn) {
+    performanceBtn.addEventListener('click', () => showPerformanceDashboard());
+  }
+  
+  // 음성 입력 초기화
+  if (voiceInputBtn) {
+    initVoiceInput();
+    voiceInputBtn.addEventListener('click', toggleVoiceInput);
+  }
+  
+  // 음성 설정 로드
+  loadVoiceSettings();
+  
+  // TTS 토글 버튼
+  const ttsToggle = document.getElementById('ttsToggle');
+  if (ttsToggle) {
+    updateTTSButton();
+    ttsToggle.addEventListener('click', toggleTTS);
+  }
+
+  // 음성 설정 버튼
+  const voiceSettingsBtn = document.getElementById('voiceSettingsBtn');
+  if (voiceSettingsBtn) {
+    voiceSettingsBtn.addEventListener('click', () => {
+      openVoiceSettingsModal();
+    });
+  }
+
+  // 음성 일시정지/재개 버튼
+  const ttsPauseBtn = document.getElementById('ttsPauseBtn');
+  if (ttsPauseBtn) {
+    ttsPauseBtn.addEventListener('click', toggleTTSPause);
+  }
+  
+  // 테마 토글 버튼
+  const themeToggle = document.getElementById('themeToggle');
+  if (themeToggle) {
+    themeToggle.addEventListener('click', toggleTheme);
+    // 저장된 테마 불러오기
+    const savedTheme = localStorage.getItem('athena-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    updateThemeIcon(savedTheme);
+  }
 
   // 모달 닫기
   document.querySelectorAll('.close-btn').forEach(btn => {
@@ -127,7 +187,132 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 주기적으로 AI 상태 체크
   setInterval(checkAIStatus, 30000);
+
+  // 키보드 단축키 설정
+  setupKeyboardShortcuts();
 });
+
+// 키보드 단축키 설정
+function setupKeyboardShortcuts() {
+  document.addEventListener('keydown', (e) => {
+    // Ctrl+K 또는 Cmd+K: 새 대화
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      createNewSession();
+      return;
+    }
+
+    // Ctrl+/ 또는 Cmd+/: 도움말 표시
+    if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+      e.preventDefault();
+      showKeyboardShortcutsHelp();
+      return;
+    }
+
+    // Ctrl+L 또는 Cmd+L: 입력창에 포커스 (입력창이 포커스되지 않은 경우)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
+      if (document.activeElement !== messageInput) {
+        e.preventDefault();
+        messageInput.focus();
+      }
+      return;
+    }
+
+    // Ctrl+M 또는 Cmd+M: 장기 기억 모달 열기
+    if ((e.ctrlKey || e.metaKey) && e.key === 'm') {
+      e.preventDefault();
+      openModal('memoryModal');
+      return;
+    }
+
+    // Ctrl+Shift+K 또는 Cmd+Shift+K: 의사결정 로그 보기
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'K') {
+      e.preventDefault();
+      showDecisionLog();
+      return;
+    }
+  });
+}
+
+// 키보드 단축키 도움말 표시
+function showKeyboardShortcutsHelp() {
+  const helpContent = `
+    <div class="shortcuts-help">
+      <h3>⌨️ 키보드 단축키</h3>
+      <div class="shortcuts-list">
+        <div class="shortcut-item">
+          <kbd>Ctrl/Cmd</kbd> + <kbd>K</kbd>
+          <span>새 대화 시작</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl/Cmd</kbd> + <kbd>L</kbd>
+          <span>입력창에 포커스</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl/Cmd</kbd> + <kbd>M</kbd>
+          <span>장기 기억 관리</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Ctrl/Cmd</kbd> + <kbd>Shift</kbd> + <kbd>K</kbd>
+          <span>의사결정 로그 보기</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Enter</kbd>
+          <span>메시지 전송</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Shift</kbd> + <kbd>Enter</kbd>
+          <span>줄바꿈</span>
+        </div>
+        <div class="shortcut-item">
+          <kbd>Esc</kbd>
+          <span>모달 닫기</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // 기존 도움말 모달이 있으면 제거
+  const existingHelp = document.getElementById('shortcutsHelpModal');
+  if (existingHelp) {
+    existingHelp.remove();
+  }
+
+  // 도움말 모달 생성
+  const helpModal = document.createElement('div');
+  helpModal.id = 'shortcutsHelpModal';
+  helpModal.className = 'modal';
+  helpModal.style.display = 'flex';
+  helpModal.innerHTML = `
+    <div class="modal-content shortcuts-modal">
+      <div class="modal-header">
+        <h3>⌨️ 키보드 단축키</h3>
+        <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+      </div>
+      <div class="modal-body">
+        ${helpContent}
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(helpModal);
+
+  // 모달 외부 클릭시 닫기
+  helpModal.addEventListener('click', (e) => {
+    if (e.target === helpModal) {
+      helpModal.remove();
+    }
+  });
+
+  // ESC 키로 닫기
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      helpModal.remove();
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+}
 
 // 메시지 전송 (스트리밍 지원)
 let isSubmitting = false; // 중복 제출 방지 플래그
@@ -187,7 +372,7 @@ async function handleRegularMessage(message) {
 
     if (data.success) {
       hideThinking();
-      addMessage('assistant', data.response, data.metadata);
+      addMessageWithVoice('assistant', data.response, data.metadata);
       await loadSessions();
     } else {
       throw new Error(data.error || '응답 오류');
@@ -268,6 +453,9 @@ async function handleStreamingMessage(message) {
               // 협업 모드에 따른 UI 업데이트
               if (metadata.strategy === 'parallel' || metadata.strategy === 'debate' || metadata.strategy === 'voting') {
                 console.log('🎬 협업 모드:', metadata.strategy, '사용된 AI:', metadata.agentsUsed);
+                updateThinkingStatus(`협업 모드: ${translateStrategy(metadata.strategy)}`, `${metadata.agentsUsed?.length || 0}개 AI 사용 중`);
+              } else {
+                updateThinkingStatus('응답 생성 중...', '');
               }
             } else if (parsed.type === 'chunk') {
               // 한글 콘텐츠 안전하게 처리
@@ -275,33 +463,53 @@ async function handleStreamingMessage(message) {
               fullContent += chunkContent;
               const streamingContentDiv = assistantMessageDiv.querySelector('.streaming-content');
               if (streamingContentDiv) {
-                streamingContentDiv.innerHTML = formatMessage(fullContent);
+                streamingContentDiv.innerHTML = formatMessage(fullContent, metadata?.searchResults || null);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+              }
+            } else if (parsed.type === 'tool_result') {
+              // MCP 도구 실행 결과
+              console.log('🔧 도구 실행 결과:', parsed.data);
+              renderArtifacts(assistantMessageDiv, parsed.data);
+            } else if (parsed.type === 'updated_response') {
+              // 도구 실행 후 업데이트된 응답
+              fullContent = parsed.content;
+              const streamingContentDiv = assistantMessageDiv.querySelector('.streaming-content');
+              if (streamingContentDiv) {
+                streamingContentDiv.innerHTML = formatMessage(fullContent, metadata?.searchResults || null);
                 chatMessages.scrollTop = chatMessages.scrollHeight;
               }
             } else if (parsed.type === 'agent_response') {
               // Parallel 모드: 각 AI의 응답
               console.log(`📝 ${parsed.agent}의 응답 수신됨`);
+              updateThinkingStatus(`${parsed.agent} 응답 수신`, '다른 AI들의 응답을 기다리는 중...');
             } else if (parsed.type === 'step_start') {
               // Sequential 모드: 단계 시작
               console.log(`📌 단계 ${parsed.step} 시작 (${parsed.agent})`);
+              updateThinkingStatus(`단계 ${parsed.step} 진행 중`, `${parsed.agent} 처리 중...`);
             } else if (parsed.type === 'debate_round') {
               // Debate 모드: 라운드 시작
               console.log(`💬 토론 라운드 ${parsed.round} 시작`);
+              updateThinkingStatus(`토론 라운드 ${parsed.round}`, 'AI들이 의견을 교환하는 중...');
             } else if (parsed.type === 'debate_opinion_start') {
               // Debate 모드: 의견 시작
               console.log(`💭 ${parsed.agent}의 의견 시작`);
+              updateThinkingStatus(`${parsed.agent}의 의견 수집 중`, '');
             } else if (parsed.type === 'debate_conclusion_start') {
               // Debate 모드: 결론 시작
               console.log(`📊 결론 도출 시작`);
+              updateThinkingStatus('결론 도출 중', '총괄 AI가 의견을 종합하는 중...');
             } else if (parsed.type === 'vote_start') {
               // Voting 모드: 투표 시작
               console.log(`🗳️ ${parsed.agent}의 투표 시작`);
+              updateThinkingStatus(`${parsed.agent} 투표 수집 중`, '');
             } else if (parsed.type === 'voting_tally_start') {
               // Voting 모드: 집계 시작
               console.log(`📊 투표 집계 시작`);
+              updateThinkingStatus('투표 집계 중', '총괄 AI가 투표를 집계하는 중...');
             } else if (parsed.type === 'synthesis_start') {
               // Parallel 모드: 종합 시작
               console.log(`🔄 응답 종합 시작`);
+              updateThinkingStatus('응답 종합 중', '총괄 AI가 여러 AI의 답변을 종합하는 중...');
             } else if (parsed.type === 'done') {
               // 스트리밍 완료
               if (metadata) {
@@ -311,9 +519,11 @@ async function handleStreamingMessage(message) {
               if (fullContent) {
                 const finalContentDiv = assistantMessageDiv.querySelector('.streaming-content');
                 if (finalContentDiv) {
-                  finalContentDiv.innerHTML = formatMessage(fullContent);
+                  finalContentDiv.innerHTML = formatMessage(fullContent, metadata?.searchResults || null);
                 }
               }
+              // 음성 출력
+              handleStreamingComplete(fullContent);
               await loadSessions();
               return;
             } else if (parsed.type === 'error') {
@@ -331,6 +541,589 @@ async function handleStreamingMessage(message) {
     addMessage('assistant', '죄송합니다. 스트리밍 중 오류가 발생했습니다: ' + error.message);
   }
 }
+
+// Artifacts 렌더링 함수
+function renderArtifacts(messageDiv, toolResults) {
+  if (!toolResults || !Array.isArray(toolResults) || toolResults.length === 0) {
+    return;
+  }
+
+  // Artifacts 컨테이너 찾기 또는 생성
+  let artifactsContainer = messageDiv.querySelector('.artifacts-container');
+  if (!artifactsContainer) {
+    artifactsContainer = document.createElement('div');
+    artifactsContainer.className = 'artifacts-container';
+    const messageContent = messageDiv.querySelector('.message-content');
+    if (messageContent) {
+      messageContent.appendChild(artifactsContainer);
+    } else {
+      messageDiv.appendChild(artifactsContainer);
+    }
+  }
+
+  toolResults.forEach((toolResult, index) => {
+    const artifactDiv = document.createElement('div');
+    artifactDiv.className = 'artifact';
+    artifactDiv.setAttribute('data-tool', toolResult.tool);
+    artifactDiv.setAttribute('data-index', index);
+
+    const toolName = toolResult.tool;
+    const result = toolResult.result || {};
+    const success = result.success !== false;
+
+    let artifactHTML = `
+      <div class="artifact-header">
+        <div class="artifact-title">
+          <span class="artifact-icon">${getToolIcon(toolName)}</span>
+          <span class="artifact-name">${getToolDisplayName(toolName)}</span>
+          <span class="artifact-status ${success ? 'success' : 'error'}">
+            ${success ? '✓' : '✗'}
+          </span>
+        </div>
+      </div>
+      <div class="artifact-content">
+    `;
+
+    if (success) {
+      artifactHTML += renderToolResult(toolName, result);
+    } else {
+      artifactHTML += `
+        <div class="artifact-error">
+          <strong>오류:</strong> ${result.error || '알 수 없는 오류'}
+        </div>
+      `;
+    }
+
+    artifactHTML += `</div>`;
+    artifactDiv.innerHTML = artifactHTML;
+    artifactsContainer.appendChild(artifactDiv);
+  });
+
+  // 스크롤을 맨 아래로
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  
+  // Prism.js 하이라이팅 적용
+  if (window.Prism) {
+    artifactsContainer.querySelectorAll('pre code').forEach((block) => {
+      Prism.highlightElement(block);
+    });
+  }
+}
+
+// 도구별 결과 렌더링
+function renderToolResult(toolName, result) {
+  switch (toolName) {
+    case 'read_file':
+      const filePath = result.file_path || '파일';
+      const fileContent = result.content || '';
+      const language = detectLanguageFromPath(filePath);
+      
+      return `
+        <div class="artifact-file-info">
+          <div class="file-path">📄 ${filePath}</div>
+          <div class="artifact-actions">
+            <button class="artifact-btn edit-btn" onclick="editFile('${escapeHtml(filePath)}', ${JSON.stringify(fileContent).replace(/"/g, '&quot;')})" title="파일 편집">
+              ✏️ 편집
+            </button>
+            <button class="artifact-btn download-btn" onclick="downloadFile('${escapeHtml(filePath)}', ${JSON.stringify(fileContent).replace(/"/g, '&quot;')})" title="파일 다운로드">
+              💾 다운로드
+            </button>
+          </div>
+        </div>
+        <div class="artifact-code-block">
+          <pre><code class="language-${language}">${escapeHtml(fileContent)}</code></pre>
+        </div>
+      `;
+
+    case 'write_file':
+      return `
+        <div class="artifact-success-message">
+          ✓ 파일이 성공적으로 작성되었습니다
+        </div>
+        <div class="artifact-file-info">
+          <div class="file-path">📄 ${result.file_path || '파일'}</div>
+        </div>
+      `;
+
+    case 'list_directory':
+      const items = result.items || [];
+      const itemsHTML = items.map(item => `
+        <div class="directory-item">
+          <span class="item-icon">${item.type === 'directory' ? '📁' : '📄'}</span>
+          <span class="item-name">${item.name}</span>
+          ${item.size ? `<span class="item-size">${formatFileSize(item.size)}</span>` : ''}
+        </div>
+      `).join('');
+      return `
+        <div class="artifact-file-info">
+          <div class="file-path">📁 ${result.directory_path || '디렉토리'}</div>
+        </div>
+        <div class="artifact-directory-list">
+          ${itemsHTML}
+        </div>
+      `;
+
+    case 'delete_file':
+      return `
+        <div class="artifact-success-message">
+          ✓ 파일이 성공적으로 삭제되었습니다
+        </div>
+        <div class="artifact-file-info">
+          <div class="file-path">🗑️ ${result.file_path || '파일'}</div>
+        </div>
+      `;
+
+    case 'execute_code':
+      const stdout = result.stdout || '';
+      const stderr = result.stderr || '';
+      const codeLanguage = result.language || 'unknown';
+      const codeContent = result.code || '';
+      
+      let codeResultHTML = `
+        <div class="artifact-code-execution">
+          <div class="code-language">${getLanguageDisplayName(codeLanguage)}</div>
+      `;
+
+      // 코드가 있으면 표시
+      if (codeContent) {
+        codeResultHTML += `
+          <div class="code-input">
+            <div class="code-label">코드:</div>
+            <pre><code class="language-${codeLanguage}">${escapeHtml(codeContent)}</code></pre>
+            <button class="artifact-btn" style="margin-top: 0.5rem;" onclick="executeCodeAgain('${codeLanguage}', ${JSON.stringify(codeContent).replace(/"/g, '&quot;')})" title="코드 다시 실행">
+              ▶️ 다시 실행
+            </button>
+          </div>
+        `;
+      }
+
+      if (stdout) {
+        codeResultHTML += `
+          <div class="code-output">
+            <div class="output-label">출력:</div>
+            <pre><code class="language-text">${escapeHtml(stdout)}</code></pre>
+          </div>
+        `;
+      }
+
+      if (stderr) {
+        codeResultHTML += `
+          <div class="code-error">
+            <div class="error-label">오류:</div>
+            <pre><code class="language-text">${escapeHtml(stderr)}</code></pre>
+          </div>
+        `;
+      }
+
+      codeResultHTML += `</div>`;
+      return codeResultHTML;
+
+    case 'call_api':
+      const apiData = result.data || result.result?.data;
+      const apiStatus = result.statusCode || result.result?.statusCode;
+      const apiUrl = result.url || result.result?.url;
+      
+      let apiHTML = `
+        <div class="artifact-api-result">
+          <div class="api-header">
+            <span class="api-method">${result.method || result.result?.method || 'GET'}</span>
+            <span class="api-url">${escapeHtml(apiUrl || '')}</span>
+            ${apiStatus ? `<span class="api-status status-${Math.floor(apiStatus / 100)}xx">${apiStatus}</span>` : ''}
+          </div>
+      `;
+
+      if (apiData) {
+        const dataStr = typeof apiData === 'string' ? apiData : JSON.stringify(apiData, null, 2);
+        apiHTML += `
+          <div class="api-response">
+            <pre><code class="language-json">${escapeHtml(dataStr)}</code></pre>
+          </div>
+        `;
+      }
+
+      apiHTML += `</div>`;
+      return apiHTML;
+
+    case 'query_database':
+      const dbRows = result.rows || result.result?.rows || [];
+      const dbColumns = result.columns || result.result?.columns || [];
+      
+      if (dbRows.length === 0) {
+        return '<div class="artifact-success-message">쿼리 결과가 없습니다.</div>';
+      }
+
+      let dbHTML = `
+        <div class="artifact-database-result">
+          <div class="db-header">
+            <span class="db-row-count">${dbRows.length}개 행</span>
+            <span class="db-column-count">${dbColumns.length}개 컬럼</span>
+          </div>
+          <div class="db-table-container">
+            <table class="db-table">
+              <thead>
+                <tr>
+                  ${dbColumns.map(col => `<th>${escapeHtml(col)}</th>`).join('')}
+                </tr>
+              </thead>
+              <tbody>
+      `;
+
+      dbRows.forEach(row => {
+        dbHTML += '<tr>';
+        dbColumns.forEach(col => {
+          const value = row[col];
+          const displayValue = value === null || value === undefined ? '<em>NULL</em>' : escapeHtml(String(value));
+          dbHTML += `<td>${displayValue}</td>`;
+        });
+        dbHTML += '</tr>';
+      });
+
+      dbHTML += `
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      return dbHTML;
+
+    case 'process_image':
+      const imageOutputPath = result.output_path || result.result?.output_path;
+      const imageMetadata = result.metadata || result.result?.metadata;
+      const imageOperation = result.operation || result.result?.operation;
+      
+      let imageHTML = `
+        <div class="artifact-image-result">
+          <div class="image-header">
+            <span class="image-operation">${getImageOperationName(imageOperation)}</span>
+            ${imageMetadata ? `<span class="image-size">${imageMetadata.width}×${imageMetadata.height}</span>` : ''}
+          </div>
+      `;
+
+      if (imageOutputPath) {
+        // 이미지 파일 경로를 상대 경로로 변환하여 표시
+        const imageUrl = `/workspace/${imageOutputPath.replace(/^.*[\\\/]workspace[\\\/]/, '')}`;
+        imageHTML += `
+          <div class="image-preview">
+            <img src="${escapeHtml(imageUrl)}" alt="처리된 이미지" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+            <div style="display: none; padding: 1rem; background: var(--background-dark); border-radius: 8px; color: var(--text-secondary);">
+              이미지를 불러올 수 없습니다: ${escapeHtml(imageOutputPath)}
+            </div>
+          </div>
+          <div class="artifact-actions">
+            <button class="artifact-btn download-btn" onclick="downloadImage('${escapeHtml(imageUrl)}', '${escapeHtml(imageOutputPath.split(/[\\\/]/).pop())}')" title="이미지 다운로드">
+              💾 다운로드
+            </button>
+          </div>
+        `;
+      }
+
+      if (imageMetadata) {
+        imageHTML += `
+          <div class="image-metadata">
+            <div class="metadata-item"><strong>포맷:</strong> ${imageMetadata.format || 'N/A'}</div>
+            <div class="metadata-item"><strong>크기:</strong> ${formatFileSize(imageMetadata.size || 0)}</div>
+          </div>
+        `;
+      }
+
+      imageHTML += `</div>`;
+      return imageHTML;
+
+    case 'send_email':
+      const emailMessageId = result.messageId || result.result?.messageId;
+      const emailAccepted = result.accepted || result.result?.accepted || [];
+      const emailRejected = result.rejected || result.result?.rejected || [];
+      
+      return `
+        <div class="artifact-email-result">
+          <div class="email-success-message">
+            ✓ 이메일이 성공적으로 전송되었습니다
+          </div>
+          <div class="email-details">
+            ${emailMessageId ? `<div class="email-detail-item"><strong>메시지 ID:</strong> ${escapeHtml(emailMessageId)}</div>` : ''}
+            ${emailAccepted.length > 0 ? `<div class="email-detail-item"><strong>수신자:</strong> ${emailAccepted.map(e => escapeHtml(e)).join(', ')}</div>` : ''}
+            ${emailRejected.length > 0 ? `<div class="email-detail-item email-error"><strong>거부됨:</strong> ${emailRejected.map(e => escapeHtml(e)).join(', ')}</div>` : ''}
+          </div>
+        </div>
+      `;
+
+    default:
+      return `
+        <div class="artifact-raw-result">
+          <pre><code class="language-json">${escapeHtml(JSON.stringify(result, null, 2))}</code></pre>
+        </div>
+      `;
+  }
+}
+
+// 도구 아이콘 가져오기
+function getToolIcon(toolName) {
+  const icons = {
+    'read_file': '📖',
+    'write_file': '✍️',
+    'list_directory': '📂',
+    'delete_file': '🗑️',
+    'execute_code': '⚡',
+    'call_api': '🌐',
+    'query_database': '🗄️',
+    'process_image': '🖼️',
+    'send_email': '📧'
+  };
+  return icons[toolName] || '🔧';
+}
+
+// 도구 표시 이름 가져오기
+function getToolDisplayName(toolName) {
+  const names = {
+    'read_file': '파일 읽기',
+    'write_file': '파일 쓰기',
+    'list_directory': '디렉토리 목록',
+    'delete_file': '파일 삭제',
+    'execute_code': '코드 실행',
+    'call_api': 'API 호출',
+    'query_database': '데이터베이스 쿼리',
+    'process_image': '이미지 처리',
+    'send_email': '이메일 전송'
+  };
+  return names[toolName] || toolName;
+}
+
+// 이미지 작업 이름 가져오기
+function getImageOperationName(operation) {
+  const names = {
+    'resize': '리사이즈',
+    'convert': '포맷 변환',
+    'metadata': '메타데이터',
+    'crop': '크롭',
+    'rotate': '회전',
+    'grayscale': '그레이스케일',
+    'blur': '블러'
+  };
+  return names[operation] || operation;
+}
+
+// 파일 크기 포맷팅
+function formatFileSize(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+// 이미지 다운로드 함수
+window.downloadImage = function(imageUrl, filename) {
+  const a = document.createElement('a');
+  a.href = imageUrl;
+  a.download = filename || 'image.png';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+};
+
+// 언어 표시 이름 가져오기
+function getLanguageDisplayName(language) {
+  const names = {
+    'python': 'Python',
+    'javascript': 'JavaScript',
+    'node': 'Node.js',
+    'bash': 'Bash',
+    'shell': 'Shell'
+  };
+  return names[language] || language;
+}
+
+// 파일 경로에서 언어 감지
+function detectLanguageFromPath(filePath) {
+  if (!filePath) return 'text';
+  
+  const ext = filePath.split('.').pop().toLowerCase();
+  const languageMap = {
+    'js': 'javascript',
+    'jsx': 'javascript',
+    'ts': 'typescript',
+    'tsx': 'typescript',
+    'py': 'python',
+    'java': 'java',
+    'cpp': 'cpp',
+    'c': 'c',
+    'cs': 'csharp',
+    'php': 'php',
+    'rb': 'ruby',
+    'go': 'go',
+    'rs': 'rust',
+    'swift': 'swift',
+    'kt': 'kotlin',
+    'scala': 'scala',
+    'sh': 'bash',
+    'bash': 'bash',
+    'zsh': 'bash',
+    'fish': 'bash',
+    'html': 'html',
+    'htm': 'html',
+    'xml': 'xml',
+    'css': 'css',
+    'scss': 'scss',
+    'sass': 'sass',
+    'less': 'less',
+    'json': 'json',
+    'yaml': 'yaml',
+    'yml': 'yaml',
+    'toml': 'toml',
+    'ini': 'ini',
+    'md': 'markdown',
+    'markdown': 'markdown',
+    'sql': 'sql',
+    'r': 'r',
+    'm': 'objectivec',
+    'mm': 'objectivec',
+    'vue': 'vue',
+    'svelte': 'svelte',
+    'dart': 'dart',
+    'lua': 'lua',
+    'perl': 'perl',
+    'pl': 'perl',
+    'dockerfile': 'docker',
+    'docker': 'docker',
+    'makefile': 'makefile',
+    'mk': 'makefile',
+    'cmake': 'cmake',
+    'gradle': 'gradle',
+    'maven': 'xml',
+    'pom': 'xml',
+    'txt': 'text',
+    'log': 'text',
+    'conf': 'text',
+    'config': 'text',
+    'env': 'text',
+    'gitignore': 'text',
+    'gitattributes': 'text',
+    'editorconfig': 'text'
+  };
+  
+  return languageMap[ext] || 'text';
+}
+
+// HTML 이스케이프
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// 파일 편집 함수
+window.editFile = function(filePath, fileContent) {
+  // 파일 편집 모달 생성
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.style.display = 'flex';
+  
+  // 파일 경로와 내용을 안전하게 이스케이프
+  const safeFilePath = escapeHtml(filePath);
+  const safeFileContent = escapeHtml(fileContent);
+  
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width: 800px; max-height: 90vh;">
+      <div class="modal-header">
+        <h3>파일 편집: ${safeFilePath}</h3>
+        <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+      </div>
+      <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem;">
+        <textarea id="fileEditContent" style="width: 100%; height: 400px; font-family: 'Courier New', monospace; padding: 1rem; background: var(--surface); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; resize: vertical;">${safeFileContent}</textarea>
+        <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+          <button class="artifact-btn" onclick="this.closest('.modal').remove()">취소</button>
+          <button class="artifact-btn" style="background: var(--primary-color);" onclick="saveFile('${safeFilePath.replace(/'/g, "\\'")}')">저장</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  
+  // 모달 외부 클릭 시 닫기
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.remove();
+    }
+  });
+};
+
+// 파일 저장 함수
+window.saveFile = async function(filePath) {
+  const content = document.getElementById('fileEditContent').value;
+  
+  try {
+    // MCP write_file 도구를 사용하여 파일 저장
+    const response = await fetch(`${API_BASE}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        userId: userId,
+        sessionId: currentSessionId,
+        message: `다음 파일을 저장해줘:\n\n파일 경로: ${filePath}\n\n내용:\n${content}`
+      })
+    });
+    
+    const data = await response.json();
+    if (data.success) {
+      alert('파일이 성공적으로 저장되었습니다.');
+      // 모달 닫기
+      document.querySelector('.modal').remove();
+      // 페이지 새로고침 또는 메시지 다시 로드
+      location.reload();
+    } else {
+      throw new Error(data.error || '파일 저장 실패');
+    }
+  } catch (error) {
+    console.error('파일 저장 오류:', error);
+    alert('파일 저장 중 오류가 발생했습니다: ' + error.message);
+  }
+};
+
+// 파일 다운로드 함수
+window.downloadFile = function(filePath, fileContent) {
+  const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filePath.split('/').pop() || 'file.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
+// 코드 다시 실행 함수
+window.executeCodeAgain = async function(language, code) {
+  try {
+    const response = await fetch(`${API_BASE}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        userId: userId,
+        sessionId: currentSessionId,
+        message: `다음 ${language} 코드를 실행해줘:\n\n\`\`\`${language}\n${code}\n\`\`\``
+      })
+    });
+    
+    const data = await response.json();
+    if (data.success) {
+      // 메시지 추가
+      addMessage('user', `다음 ${language} 코드를 실행해줘:\n\n\`\`\`${language}\n${code}\n\`\`\``);
+      addMessage('assistant', data.response, data.metadata);
+    } else {
+      throw new Error(data.error || '코드 실행 실패');
+    }
+  } catch (error) {
+    console.error('코드 실행 오류:', error);
+    alert('코드 실행 중 오류가 발생했습니다: ' + error.message);
+  }
+};
 
 // 메타데이터 렌더링 헬퍼 함수
 function renderMetadata(metadataDiv, metadata) {
@@ -391,7 +1184,7 @@ function addMessage(role, content, metadata = null) {
 
   const contentDiv = document.createElement('div');
   contentDiv.className = 'message-content';
-  const formattedContent = formatMessage(content);
+  const formattedContent = formatMessage(content, metadata?.searchResults || null);
   console.log('Formatted content:', formattedContent.substring(0, 100));
   contentDiv.innerHTML = formattedContent;
 
@@ -424,11 +1217,15 @@ function addMessage(role, content, metadata = null) {
       const sourcesSection = document.createElement('div');
       sourcesSection.className = 'sources-section';
       
+      // 출처 인용 통계 계산
+      const citationStats = window.lastCitationStats || {};
+      const totalCitations = Object.values(citationStats).reduce((sum, count) => sum + count, 0);
+      
       const sourcesHeader = document.createElement('div');
       sourcesHeader.className = 'sources-header';
       sourcesHeader.innerHTML = `
         <span class="sources-toggle" onclick="toggleSources(this)">
-          📚 출처 보기 (${metadata.searchResults.length}개)
+          📚 출처 보기 (${metadata.searchResults.length}개${totalCitations > 0 ? `, 인용 ${totalCitations}회` : ''})
           <span class="toggle-icon">▼</span>
         </span>
       `;
@@ -441,12 +1238,31 @@ function addMessage(role, content, metadata = null) {
       metadata.searchResults.forEach((result, index) => {
         const sourceItem = document.createElement('div');
         sourceItem.className = 'source-item';
+        sourceItem.setAttribute('data-source-url', result.link);
+        const reliability = getSourceReliability(result.link);
+        const reliabilityClass = reliability.includes('높음') ? 'reliability-high' : 
+                                 reliability.includes('낮음') ? 'reliability-low' : 'reliability-medium';
+        const citationCount = citationStats[index] || 0;
+        
+        // 출처 검증 상태 확인
+        const isVerified = isSourceVerified(result.link);
+        const verifiedBadge = isVerified 
+          ? '<span class="verified-badge verified">✓ 확인됨</span>' 
+          : '<span class="verified-badge unverified" onclick="toggleSourceVerification(this)" title="클릭하여 확인 상태 변경">○ 미확인</span>';
+        
         sourceItem.innerHTML = `
           <div class="source-number">${index + 1}</div>
           <div class="source-content">
-            <a href="${result.link}" target="_blank" rel="noopener noreferrer" class="source-title">
-              ${result.title || '제목 없음'}
-            </a>
+            <div class="source-header">
+              <a href="${result.link}" target="_blank" rel="noopener noreferrer" class="source-title" onclick="markSourceAsVerified('${result.link.replace(/'/g, "\\'")}')">
+                ${result.title || '제목 없음'}
+              </a>
+              <div class="source-badges">
+                ${verifiedBadge}
+                <span class="source-reliability ${reliabilityClass}">${reliability}</span>
+                ${citationCount > 0 ? `<span class="citation-badge">인용 ${citationCount}회</span>` : ''}
+              </div>
+            </div>
             <div class="source-link">${result.link}</div>
             ${result.snippet ? `<div class="source-snippet">${result.snippet}</div>` : ''}
           </div>
@@ -478,11 +1294,11 @@ function addMessage(role, content, metadata = null) {
     
     // 사고 과정 링크는 assistant 메시지에만 표시
     if (role === 'assistant') {
-      const logLink = document.createElement('a');
-      logLink.className = 'decision-log-link';
-      logLink.textContent = '🧠 사고 과정 보기';
-      logLink.onclick = () => showDecisionLog();
-      metadataDiv.appendChild(logLink);
+    const logLink = document.createElement('a');
+    logLink.className = 'decision-log-link';
+    logLink.textContent = '🧠 사고 과정 보기';
+    logLink.onclick = () => showDecisionLog();
+    metadataDiv.appendChild(logLink);
     }
 
     contentDiv.appendChild(metadataDiv);
@@ -504,11 +1320,11 @@ function addMessage(role, content, metadata = null) {
       return;
     }
     
-    chatMessages.appendChild(messageDiv);
-    
-    // 스크롤 하단으로
+  chatMessages.appendChild(messageDiv);
+
+  // 스크롤 하단으로
     setTimeout(() => {
-      chatMessages.scrollTop = chatMessages.scrollHeight;
+  chatMessages.scrollTop = chatMessages.scrollHeight;
     }, 0);
     
     console.log('Message appended successfully:', {
@@ -524,8 +1340,8 @@ function addMessage(role, content, metadata = null) {
   }
 }
 
-// 메시지 포맷팅 (마크다운 간단 지원)
-function formatMessage(text) {
+// 메시지 포맷팅 (마크다운 간단 지원 + 출처 인라인 링크)
+function formatMessage(text, searchResults = null) {
   if (!text && text !== 0) return '';
   
   // 문자열로 변환
@@ -539,6 +1355,44 @@ function formatMessage(text) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
   
+  // 출처 인라인 링크 처리 ([출처 N] 또는 [출처 N, 출처 M] 형식)
+  if (searchResults && searchResults.length > 0) {
+    // 출처 인용 통계 추적
+    const citationStats = {};
+    
+    // [출처 1, 출처 2] 형식 처리
+    formatted = formatted.replace(/\[출처\s+(\d+(?:\s*,\s*\d+)*)\]/g, (match, numbers) => {
+      const indices = numbers.split(',').map(n => parseInt(n.trim()) - 1);
+      const links = indices.map(idx => {
+        if (idx >= 0 && idx < searchResults.length) {
+          const result = searchResults[idx];
+          const reliability = getSourceReliability(result.link);
+          const reliabilityClass = getReliabilityClass(reliability);
+          citationStats[idx] = (citationStats[idx] || 0) + 1;
+          return `<a href="${result.link}" target="_blank" rel="noopener noreferrer" class="inline-citation ${reliabilityClass}" data-source-index="${idx}" onclick="if(event.ctrlKey || event.metaKey) return true; event.preventDefault(); showSourceModal(${idx}); return false;" title="${result.title || ''} (${reliability}) - 클릭: 상세 정보, Ctrl+클릭: 원문 열기">[출처 ${idx + 1}]</a>`;
+        }
+        return `[출처 ${idx + 1}]`;
+      });
+      return links.join(' ');
+    });
+    
+    // [출처 N] 형식 처리 (위에서 처리되지 않은 경우)
+    formatted = formatted.replace(/\[출처\s+(\d+)\]/g, (match, num) => {
+      const idx = parseInt(num) - 1;
+      if (idx >= 0 && idx < searchResults.length) {
+        const result = searchResults[idx];
+        const reliability = getSourceReliability(result.link);
+        const reliabilityClass = getReliabilityClass(reliability);
+        citationStats[idx] = (citationStats[idx] || 0) + 1;
+        return `<a href="${result.link}" target="_blank" rel="noopener noreferrer" class="inline-citation ${reliabilityClass}" data-source-index="${idx}" onclick="if(event.ctrlKey || event.metaKey) return true; event.preventDefault(); showSourceModal(${idx}); return false;" title="${result.title || ''} (${reliability}) - 클릭: 상세 정보, Ctrl+클릭: 원문 열기">[출처 ${num}]</a>`;
+      }
+      return match;
+    });
+    
+    // 출처 인용 통계를 전역 변수에 저장 (나중에 사용)
+    window.lastCitationStats = citationStats;
+  }
+  
   // 마크다운 처리
   formatted = formatted
     .replace(/\n/g, '<br>')
@@ -548,6 +1402,245 @@ function formatMessage(text) {
   
   return formatted;
 }
+
+// 출처 신뢰도 판단 함수 (프론트엔드용)
+function getSourceReliability(url) {
+  if (!url) return '보통';
+  
+  const urlLower = url.toLowerCase();
+  
+  if (urlLower.includes('.gov') || urlLower.includes('.go.kr')) {
+    return '높음 (공식)';
+  }
+  if (urlLower.includes('news.') || urlLower.includes('.news') || 
+      urlLower.includes('bbc') || urlLower.includes('cnn') || 
+      urlLower.includes('reuters') || urlLower.includes('ap.org') ||
+      urlLower.includes('ytn') || urlLower.includes('sbs') || 
+      urlLower.includes('kbs') || urlLower.includes('mbc')) {
+    return '높음 (뉴스)';
+  }
+  if (urlLower.includes('.edu') || urlLower.includes('.ac.kr') ||
+      urlLower.includes('scholar') || urlLower.includes('research') ||
+      urlLower.includes('pubmed') || urlLower.includes('arxiv')) {
+    return '높음 (학술)';
+  }
+  if (urlLower.includes('wikipedia')) {
+    return '보통 (위키)';
+  }
+  if (urlLower.includes('youtube') || urlLower.includes('youtu.be')) {
+    return '보통 (YouTube)';
+  }
+  if (urlLower.includes('blog') || urlLower.includes('tistory') ||
+      urlLower.includes('naver.com/blog') || urlLower.includes('medium') ||
+      urlLower.includes('reddit') || urlLower.includes('stackoverflow')) {
+    return '낮음 (블로그/포럼)';
+  }
+  return '보통';
+}
+
+// 신뢰도별 CSS 클래스 반환
+function getReliabilityClass(reliability) {
+  if (reliability.includes('높음')) {
+    return 'citation-high';
+  } else if (reliability.includes('낮음')) {
+    return 'citation-low';
+  } else {
+    return 'citation-medium';
+  }
+}
+
+// 출처 검증 상태 확인
+function isSourceVerified(url) {
+  const verifiedSources = JSON.parse(localStorage.getItem('athena-verified-sources') || '[]');
+  return verifiedSources.includes(url);
+}
+
+// 출처 검증 상태 토글
+window.toggleSourceVerification = function(badgeElement) {
+  const sourceItem = badgeElement.closest('.source-item');
+  const sourceUrl = sourceItem.getAttribute('data-source-url');
+  
+  let verifiedSources = JSON.parse(localStorage.getItem('athena-verified-sources') || '[]');
+  const isVerified = verifiedSources.includes(sourceUrl);
+  
+  if (isVerified) {
+    verifiedSources = verifiedSources.filter(url => url !== sourceUrl);
+    badgeElement.className = 'verified-badge unverified';
+    badgeElement.textContent = '○ 미확인';
+    badgeElement.title = '클릭하여 확인 상태 변경';
+    badgeElement.onclick = () => toggleSourceVerification(badgeElement);
+  } else {
+    verifiedSources.push(sourceUrl);
+    badgeElement.className = 'verified-badge verified';
+    badgeElement.textContent = '✓ 확인됨';
+    badgeElement.title = '';
+    badgeElement.onclick = null;
+  }
+  
+  localStorage.setItem('athena-verified-sources', JSON.stringify(verifiedSources));
+  
+  // 모든 출처 항목 업데이트
+  updateAllSourceVerificationBadges();
+};
+
+// 출처를 확인된 것으로 표시 (링크 클릭 시)
+window.markSourceAsVerified = function(url) {
+  let verifiedSources = JSON.parse(localStorage.getItem('athena-verified-sources') || '[]');
+  if (!verifiedSources.includes(url)) {
+    verifiedSources.push(url);
+    localStorage.setItem('athena-verified-sources', JSON.stringify(verifiedSources));
+    updateAllSourceVerificationBadges();
+  }
+};
+
+// 모든 출처 검증 배지 업데이트
+function updateAllSourceVerificationBadges() {
+  document.querySelectorAll('.source-item').forEach(sourceItem => {
+    const sourceUrl = sourceItem.getAttribute('data-source-url');
+    if (sourceUrl) {
+      const isVerified = isSourceVerified(sourceUrl);
+      const badge = sourceItem.querySelector('.verified-badge');
+      if (badge) {
+        if (isVerified) {
+          badge.className = 'verified-badge verified';
+          badge.textContent = '✓ 확인됨';
+          badge.title = '';
+          badge.onclick = null;
+        } else {
+          badge.className = 'verified-badge unverified';
+          badge.textContent = '○ 미확인';
+          badge.title = '클릭하여 확인 상태 변경';
+          badge.onclick = () => toggleSourceVerification(badge);
+        }
+      }
+    }
+  });
+}
+
+// 출처 상세 정보 모달 표시
+window.showSourceModal = function(sourceIndex) {
+  // 현재 메시지의 searchResults 가져오기
+  const currentMessage = document.querySelector('.message.assistant:last-child');
+  if (!currentMessage) {
+    console.error('메시지를 찾을 수 없습니다.');
+    return;
+  }
+  
+  const metadataDiv = currentMessage.querySelector('.message-metadata');
+  if (!metadataDiv) {
+    console.error('메타데이터를 찾을 수 없습니다.');
+    return;
+  }
+  
+  const sourcesSection = metadataDiv.querySelector('.sources-section');
+  if (!sourcesSection) {
+    console.error('출처 섹션을 찾을 수 없습니다.');
+    return;
+  }
+  
+  // 출처 데이터 재구성
+  const sourceItems = sourcesSection.querySelectorAll('.source-item');
+  if (sourceIndex < 0 || sourceIndex >= sourceItems.length) {
+    return;
+  }
+  
+  const sourceItem = sourceItems[sourceIndex];
+  const sourceTitle = sourceItem.querySelector('.source-title').textContent;
+  const sourceLink = sourceItem.querySelector('.source-title').href;
+  const sourceSnippet = sourceItem.querySelector('.source-snippet')?.textContent || '';
+  const reliability = sourceItem.querySelector('.source-reliability').textContent;
+  const reliabilityClass = reliability.includes('높음') ? 'reliability-high' : 
+                          reliability.includes('낮음') ? 'reliability-low' : 'reliability-medium';
+  
+  // 인용 횟수 가져오기
+  const citationBadge = sourceItem.querySelector('.citation-badge');
+  const citationCount = citationBadge ? parseInt(citationBadge.textContent.match(/\d+/)?.[0] || '0') : 0;
+  
+  // 검증 상태 가져오기
+  const isVerified = isSourceVerified(sourceLink);
+  const verifiedStatus = isVerified ? '✓ 확인됨' : '○ 미확인';
+  const verifiedClass = isVerified ? 'verified' : 'unverified';
+  
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.style.display = 'flex';
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h3>📚 출처 상세 정보</h3>
+        <button class="close-btn" onclick="this.closest('.modal').remove()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="source-modal-content">
+          <div class="source-modal-header">
+            <h4>${escapeHtml(sourceTitle)}</h4>
+            <div class="source-modal-badges">
+              <span class="verified-badge ${verifiedClass}" onclick="toggleSourceVerificationInModal('${escapeHtml(sourceLink)}', this)">
+                ${verifiedStatus}
+              </span>
+              <span class="source-reliability ${reliabilityClass}">${reliability}</span>
+            </div>
+          </div>
+          <div class="source-modal-info">
+            <div class="source-info-item">
+              <strong>URL:</strong>
+              <a href="${escapeHtml(sourceLink)}" target="_blank" rel="noopener noreferrer" class="source-link" onclick="markSourceAsVerified('${escapeHtml(sourceLink)}')">
+                ${escapeHtml(sourceLink)}
+              </a>
+            </div>
+            ${sourceSnippet ? `
+              <div class="source-info-item">
+                <strong>요약:</strong>
+                <p>${escapeHtml(sourceSnippet)}</p>
+              </div>
+            ` : ''}
+            ${citationCount > 0 ? `
+              <div class="source-info-item">
+                <strong>인용 횟수:</strong>
+                <span class="citation-count">${citationCount}회</span>
+              </div>
+            ` : ''}
+          </div>
+          <div class="source-modal-actions">
+            <button class="artifact-btn" onclick="window.open('${escapeHtml(sourceLink)}', '_blank'); markSourceAsVerified('${escapeHtml(sourceLink)}');">
+              🔗 원문 보기
+            </button>
+            <button class="artifact-btn" onclick="this.closest('.modal').remove()">
+              닫기
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  
+  // 모달 외부 클릭 시 닫기
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.remove();
+    }
+  });
+};
+
+// 모달 내에서 출처 검증 상태 토글
+window.toggleSourceVerificationInModal = function(url, badgeElement) {
+  let verifiedSources = JSON.parse(localStorage.getItem('athena-verified-sources') || '[]');
+  const isVerified = verifiedSources.includes(url);
+  
+  if (isVerified) {
+    verifiedSources = verifiedSources.filter(u => u !== url);
+    badgeElement.className = 'verified-badge unverified';
+    badgeElement.textContent = '○ 미확인';
+  } else {
+    verifiedSources.push(url);
+    badgeElement.className = 'verified-badge verified';
+    badgeElement.textContent = '✓ 확인됨';
+  }
+  
+  localStorage.setItem('athena-verified-sources', JSON.stringify(verifiedSources));
+  updateAllSourceVerificationBadges();
+};
 
 // 전략 이름 번역
 function translateStrategy(strategy) {
@@ -562,13 +1655,46 @@ function translateStrategy(strategy) {
 }
 
 // 생각하는 중 표시
-function showThinking(text = '생각하는 중...') {
+function showThinking(text = '생각하는 중...', subtext = '') {
   thinkingIndicator.style.display = 'flex';
-  document.getElementById('thinkingText').textContent = text;
+  updateThinkingStatus(text, subtext);
+  hideProgress();
 }
 
 function hideThinking() {
   thinkingIndicator.style.display = 'none';
+  hideProgress();
+}
+
+function updateThinkingStatus(text, subtext = '') {
+  const thinkingText = document.getElementById('thinkingText');
+  if (thinkingText) {
+    thinkingText.textContent = text;
+  }
+  
+  const thinkingSubtext = document.getElementById('thinkingSubtext');
+  if (subtext && thinkingSubtext) {
+    thinkingSubtext.textContent = subtext;
+    thinkingSubtext.style.display = 'block';
+  } else if (thinkingSubtext) {
+    thinkingSubtext.style.display = 'none';
+  }
+}
+
+function showProgress(percentage) {
+  const progressContainer = document.getElementById('thinkingProgress');
+  const progressFill = document.getElementById('progressFill');
+  if (progressContainer && progressFill) {
+    progressContainer.style.display = 'block';
+    progressFill.style.width = `${Math.min(100, Math.max(0, percentage))}%`;
+  }
+}
+
+function hideProgress() {
+  const progressContainer = document.getElementById('thinkingProgress');
+  if (progressContainer) {
+    progressContainer.style.display = 'none';
+  }
 }
 
 // 새 세션 생성
@@ -613,9 +1739,9 @@ async function loadSessions() {
         return `
         <div class="session-item ${session.id === currentSessionId ? 'active' : ''}" data-session-id="${session.id}">
           <div class="session-content">
-            <h4>${session.title || '제목 없음'}</h4>
-            <p>${new Date(session.updated_at).toLocaleDateString('ko-KR')}</p>
-          </div>
+          <h4>${session.title || '제목 없음'}</h4>
+          <p>${new Date(session.updated_at).toLocaleDateString('ko-KR')}</p>
+        </div>
           <button class="session-delete-btn" data-session-id="${session.id}" title="삭제">
             🗑️
           </button>
@@ -843,6 +1969,8 @@ function openModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) {
     modal.style.display = 'flex';
+    // 모달 열릴 때 body 스크롤 방지
+    document.body.style.overflow = 'hidden';
   }
 }
 
@@ -850,7 +1978,48 @@ function closeModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) {
     modal.style.display = 'none';
+    // 모달 닫힐 때 body 스크롤 복원
+    document.body.style.overflow = '';
   }
+}
+
+// 모달 닫기 버튼 이벤트 리스너 (DOMContentLoaded 시 실행)
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initModalHandlers);
+} else {
+  initModalHandlers();
+}
+
+function initModalHandlers() {
+  // 닫기 버튼 이벤트
+  document.querySelectorAll('.close-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const modalId = e.target.getAttribute('data-modal');
+      if (modalId) {
+        closeModal(modalId);
+      }
+    });
+  });
+  
+  // ESC 키로 모달 닫기
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.modal').forEach(modal => {
+        if (modal.style.display === 'flex') {
+          closeModal(modal.id);
+        }
+      });
+    }
+  });
+  
+  // 모달 외부 클릭시 닫기
+  document.querySelectorAll('.modal').forEach(modal => {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        closeModal(modal.id);
+      }
+    });
+  });
 }
 
 // 출처 토글 함수
@@ -870,67 +2039,421 @@ function toggleSources(element) {
 
 // Debate 모드 세부 의견 표시
 function showDebateDetails(metadata) {
-  if (!metadata.debates) return;
+  if (!metadata.debates) {
+    console.warn('Debate metadata not found');
+    return;
+  }
   
   const content = document.getElementById('debateContent');
-  let html = '';
+  let html = '<div class="debate-container">';
   
+  // 의견 비교 뷰 추가
+  html += `
+    <div class="debate-controls">
+      <button class="debate-view-btn active" onclick="switchDebateView('round')" data-view="round">
+        📋 라운드별 보기
+      </button>
+      <button class="debate-view-btn" onclick="switchDebateView('compare')" data-view="compare">
+        🔄 의견 비교
+      </button>
+      <button class="debate-view-btn" onclick="switchDebateView('timeline')" data-view="timeline">
+        📈 변화 추적
+      </button>
+    </div>
+  `;
+  
+  // 라운드별 뷰
+  html += '<div id="debate-round-view" class="debate-view">';
   metadata.debates.forEach((round, roundIndex) => {
-    html += `<div class="debate-round">
-      <h4>Round ${roundIndex + 1}</h4>
-      <div class="debate-opinions">`;
+    const roundId = `round-${roundIndex + 1}`;
+    html += `
+      <div class="debate-round-wrapper">
+        <div class="debate-round-header" onclick="toggleDebateRound('${roundId}')">
+          <h4>Round ${roundIndex + 1}</h4>
+          <span class="round-toggle-icon" id="icon-${roundId}">▼</span>
+        </div>
+        <div class="debate-round-content" id="${roundId}" style="display: ${roundIndex === 0 ? 'block' : 'none'};">
+          <div class="debate-opinions">`;
     
-    round.forEach(debate => {
+    round.forEach((debate, opinionIndex) => {
+      const agentIcon = getAgentIcon(debate.agent);
+      const opinionId = `opinion-${roundIndex}-${opinionIndex}`;
       html += `
-        <div class="debate-opinion">
+        <div class="debate-opinion" data-agent="${debate.agent}" data-round="${roundIndex + 1}">
           <div class="opinion-header">
-            <span class="opinion-agent">${debate.agent}</span>
+            <span class="opinion-agent">
+              ${agentIcon} ${debate.agent}
+            </span>
+            <div class="opinion-actions">
+              <button class="opinion-feedback-btn" onclick="toggleOpinionFeedback('${opinionId}', 'like')" title="좋아요">
+                👍 <span class="feedback-count" id="like-${opinionId}">0</span>
+              </button>
+              <button class="opinion-feedback-btn" onclick="toggleOpinionFeedback('${opinionId}', 'dislike')" title="싫어요">
+                👎 <span class="feedback-count" id="dislike-${opinionId}">0</span>
+              </button>
+            </div>
           </div>
-          <div class="opinion-content">${formatMessage(debate.opinion)}</div>
+          <div class="opinion-content" id="${opinionId}">${formatMessage(debate.opinion, metadata.searchResults || null)}</div>
         </div>
       `;
     });
     
+    html += `</div></div></div>`;
+  });
+  html += '</div>';
+  
+  // 의견 비교 뷰
+  html += '<div id="debate-compare-view" class="debate-view" style="display: none;">';
+  const agents = new Set();
+  metadata.debates.forEach(round => {
+    round.forEach(debate => agents.add(debate.agent));
+  });
+  
+  Array.from(agents).forEach(agent => {
+    const agentIcon = getAgentIcon(agent);
+    html += `
+      <div class="compare-agent-section">
+        <div class="compare-agent-header">
+          <span class="opinion-agent">${agentIcon} ${agent}</span>
+        </div>
+        <div class="compare-opinions">`;
+    
+    metadata.debates.forEach((round, roundIndex) => {
+      const opinion = round.find(d => d.agent === agent);
+      if (opinion) {
+        html += `
+          <div class="compare-opinion-item">
+            <div class="compare-round-label">Round ${roundIndex + 1}</div>
+            <div class="compare-opinion-content">${formatMessage(opinion.opinion, metadata.searchResults || null)}</div>
+          </div>
+        `;
+      }
+    });
+    
     html += `</div></div>`;
   });
+  html += '</div>';
+  
+  // 변화 추적 뷰
+  html += '<div id="debate-timeline-view" class="debate-view" style="display: none;">';
+  html += '<div class="timeline-container">';
+  
+  metadata.debates.forEach((round, roundIndex) => {
+    html += `
+      <div class="timeline-item">
+        <div class="timeline-marker">Round ${roundIndex + 1}</div>
+        <div class="timeline-content">
+          <div class="timeline-opinions">`;
+    
+    round.forEach(debate => {
+      const agentIcon = getAgentIcon(debate.agent);
+      const prevRound = roundIndex > 0 ? metadata.debates[roundIndex - 1].find(d => d.agent === debate.agent) : null;
+      const hasChanged = prevRound && prevRound.opinion !== debate.opinion;
+      
+      html += `
+        <div class="timeline-opinion ${hasChanged ? 'opinion-changed' : ''}">
+          <div class="timeline-opinion-header">
+            <span class="opinion-agent">${agentIcon} ${debate.agent}</span>
+            ${hasChanged ? '<span class="change-badge">변화 있음</span>' : '<span class="change-badge no-change">변화 없음</span>'}
+          </div>
+          <div class="timeline-opinion-content">${formatMessage(debate.opinion, metadata.searchResults || null)}</div>
+        </div>
+      `;
+    });
+    
+    html += `</div></div></div>`;
+  });
+  
+  html += '</div></div>';
   
   if (metadata.moderator) {
     html += `<div class="debate-moderator">
-      <strong>총괄 AI (${metadata.moderator})</strong>가 위 의견들을 종합하여 최종 결론을 도출했습니다.
+      <div class="moderator-header">
+        <span class="moderator-icon">⚖️</span>
+        <strong>총괄 AI (${metadata.moderator})</strong>가 위 의견들을 종합하여 최종 결론을 도출했습니다.
+      </div>
     </div>`;
   }
   
+  html += '</div>';
   content.innerHTML = html;
   openModal('debateModal');
+  
+  // 피드백 데이터 로드
+  loadOpinionFeedback();
+}
+
+// Debate 뷰 전환 함수
+window.switchDebateView = function(view) {
+  document.querySelectorAll('.debate-view').forEach(v => v.style.display = 'none');
+  document.querySelectorAll('.debate-view-btn').forEach(btn => btn.classList.remove('active'));
+  
+  document.getElementById(`debate-${view}-view`).style.display = 'block';
+  document.querySelector(`[data-view="${view}"]`).classList.add('active');
+};
+
+// 의견 피드백 토글 함수
+window.toggleOpinionFeedback = function(opinionId, type) {
+  const key = `opinion-feedback-${opinionId}-${type}`;
+  const currentCount = parseInt(localStorage.getItem(key) || '0');
+  const newCount = currentCount === 0 ? 1 : 0;
+  
+  localStorage.setItem(key, newCount.toString());
+  
+  const countElement = document.getElementById(`${type}-${opinionId}`);
+  if (countElement) {
+    countElement.textContent = newCount;
+  }
+  
+  // 버튼 활성화 상태 업데이트
+  const button = event.target.closest('.opinion-feedback-btn');
+  if (button) {
+    if (newCount > 0) {
+      button.classList.add('active');
+    } else {
+      button.classList.remove('active');
+    }
+  }
+};
+
+// 피드백 데이터 로드
+function loadOpinionFeedback() {
+  document.querySelectorAll('.opinion-feedback-btn').forEach(btn => {
+    const onclick = btn.getAttribute('onclick');
+    const match = onclick.match(/toggleOpinionFeedback\('([^']+)',\s*'([^']+)'\)/);
+    if (match) {
+      const opinionId = match[1];
+      const type = match[2];
+      const key = `opinion-feedback-${opinionId}-${type}`;
+      const count = parseInt(localStorage.getItem(key) || '0');
+      
+      const countElement = document.getElementById(`${type}-${opinionId}`);
+      if (countElement) {
+        countElement.textContent = count;
+      }
+      
+      if (count > 0) {
+        btn.classList.add('active');
+      }
+    }
+  });
+}
+
+// Debate 라운드 토글 함수
+function toggleDebateRound(roundId) {
+  const content = document.getElementById(roundId);
+  const icon = document.getElementById(`icon-${roundId}`);
+  
+  if (content.style.display === 'none') {
+    content.style.display = 'block';
+    icon.textContent = '▲';
+  } else {
+    content.style.display = 'none';
+    icon.textContent = '▼';
+  }
+}
+
+// AI 아이콘 반환 함수
+function getAgentIcon(agentName) {
+  const icons = {
+    'ChatGPT': '🧠',
+    'Gemini': '💎',
+    'Claude': '🤖',
+    'Grok': '🚀'
+  };
+  return icons[agentName] || '🤖';
 }
 
 // Voting 모드 투표 결과 표시
 function showVotingDetails(metadata) {
-  if (!metadata.votes) return;
+  if (!metadata.votes) {
+    console.warn('Voting metadata not found');
+    return;
+  }
   
   const content = document.getElementById('votingContent');
-  let html = '<div class="voting-results">';
+  let html = '<div class="voting-container">';
+  
+  // 투표 결과 파싱 및 집계
+  const voteCounts = {};
+  const voteDetails = [];
   
   metadata.votes.forEach(vote => {
-    html += `
-      <div class="vote-item">
-        <div class="vote-header">
-          <span class="vote-agent">${vote.agent}</span>
+    const response = vote.response || '';
+    // 더 정확한 선택 파싱
+    const choiceMatch = response.match(/(?:선택|결정|추천|권장)[:\s]*([A-Z]|[\d]+|[\w가-힣]+|Python|JavaScript|Go|Java|C\+\+)/i) ||
+                       response.match(/^([A-Z]|[\d]+|[\w가-힣]+)/);
+    const choice = choiceMatch ? choiceMatch[1].trim() : null;
+    
+    if (choice) {
+      voteCounts[choice] = (voteCounts[choice] || 0) + 1;
+    }
+    
+    voteDetails.push({
+      agent: vote.agent,
+      response: response,
+      choice: choice,
+      agentIcon: getAgentIcon(vote.agent)
+    });
+  });
+  
+  // 투표 통계 표시 (개선된 시각화)
+  if (Object.keys(voteCounts).length > 0) {
+    html += '<div class="voting-stats">';
+    html += '<h4>📊 투표 집계</h4>';
+    html += '<div class="vote-chart">';
+    
+    const sortedVotes = Object.entries(voteCounts)
+      .sort((a, b) => b[1] - a[1]);
+    const maxVotes = Math.max(...Object.values(voteCounts));
+    const totalVotes = metadata.votes.length;
+    
+    sortedVotes.forEach(([choice, count], index) => {
+      const percentage = (count / totalVotes) * 100;
+      const barWidth = (count / maxVotes) * 100;
+      const isWinner = index === 0 && count === maxVotes;
+      const colorClass = isWinner ? 'vote-winner' : `vote-color-${index % 4}`;
+      
+      html += `
+        <div class="vote-bar-item ${isWinner ? 'vote-winner-item' : ''}">
+          <div class="vote-bar-label">
+            <span class="vote-choice">${choice}</span>
+            <span class="vote-count">${count}표 (${percentage.toFixed(1)}%)</span>
+            ${isWinner ? '<span class="winner-badge">🏆 승리</span>' : ''}
+          </div>
+          <div class="vote-bar">
+            <div class="vote-bar-fill ${colorClass}" style="width: ${barWidth}%" data-count="${count}">
+              ${count > 0 ? count : ''}
+            </div>
+          </div>
         </div>
-        <div class="vote-content">${formatMessage(vote.response)}</div>
+      `;
+    });
+    
+    html += '</div>';
+    
+    // 승리자 강조
+    if (sortedVotes.length > 0 && sortedVotes[0][1] > 0) {
+      const winner = sortedVotes[0];
+      const winnerPercentage = (winner[1] / totalVotes) * 100;
+      html += `
+        <div class="vote-summary">
+          <div class="summary-item">
+            <strong>총 투표:</strong> ${totalVotes}표
+          </div>
+          <div class="summary-item">
+            <strong>승리 선택:</strong> <span class="winner-choice">${winner[0]}</span> (${winnerPercentage.toFixed(1)}%)
+          </div>
+        </div>
+      `;
+    }
+    
+    html += '</div>';
+  }
+  
+  // 각 AI의 상세 의견 (개선된 UI)
+  html += '<div class="voting-details">';
+  html += '<h4>💭 각 AI의 의견</h4>';
+  
+  voteDetails.forEach((vote, index) => {
+    const choiceColor = vote.choice && voteCounts[vote.choice] ? 
+      `vote-choice-${Object.keys(voteCounts).indexOf(vote.choice) % 4}` : '';
+    
+    html += `
+      <div class="vote-item" data-agent="${vote.agent}">
+        <div class="vote-header">
+          <span class="vote-agent">
+            ${vote.agentIcon} ${vote.agent}
+          </span>
+          ${vote.choice ? `<span class="vote-badge ${choiceColor}">선택: ${vote.choice}</span>` : '<span class="vote-badge no-choice">선택 없음</span>'}
+          <div class="vote-feedback">
+            <button class="vote-feedback-btn" onclick="toggleVoteFeedback('vote-${index}', 'like')" title="좋아요">
+              👍 <span class="feedback-count" id="like-vote-${index}">0</span>
+            </button>
+            <button class="vote-feedback-btn" onclick="toggleVoteFeedback('vote-${index}', 'dislike')" title="싫어요">
+              👎 <span class="feedback-count" id="dislike-vote-${index}">0</span>
+            </button>
+          </div>
+        </div>
+        <div class="vote-content" id="vote-${index}">${formatMessage(vote.response, metadata.searchResults || null)}</div>
       </div>
     `;
   });
   
+  html += '</div>';
+  
   if (metadata.counter) {
     html += `<div class="vote-counter">
-      <strong>총괄 AI (${metadata.counter})</strong>가 위 투표들을 집계하여 최종 결론을 도출했습니다.
+      <div class="counter-header">
+        <span class="counter-icon">⚖️</span>
+        <strong>총괄 AI (${metadata.counter})</strong>가 위 투표들을 집계하여 최종 결론을 도출했습니다.
+      </div>
     </div>`;
   }
   
   html += '</div>';
   content.innerHTML = html;
   openModal('votingModal');
+  
+  // 투표 바 애니메이션
+  setTimeout(() => {
+    document.querySelectorAll('.vote-bar-fill').forEach(bar => {
+      const width = bar.style.width;
+      bar.style.width = '0%';
+      setTimeout(() => {
+        bar.style.width = width;
+      }, 100);
+    });
+  }, 100);
+  
+  // 피드백 데이터 로드
+  loadVoteFeedback();
+}
+
+// 투표 피드백 토글 함수
+window.toggleVoteFeedback = function(voteId, type) {
+  const key = `vote-feedback-${voteId}-${type}`;
+  const currentCount = parseInt(localStorage.getItem(key) || '0');
+  const newCount = currentCount === 0 ? 1 : 0;
+  
+  localStorage.setItem(key, newCount.toString());
+  
+  const countElement = document.getElementById(`${type}-${voteId}`);
+  if (countElement) {
+    countElement.textContent = newCount;
+  }
+  
+  const button = event.target.closest('.vote-feedback-btn');
+  if (button) {
+    if (newCount > 0) {
+      button.classList.add('active');
+    } else {
+      button.classList.remove('active');
+    }
+  }
+};
+
+// 투표 피드백 데이터 로드
+function loadVoteFeedback() {
+  document.querySelectorAll('.vote-feedback-btn').forEach(btn => {
+    const onclick = btn.getAttribute('onclick');
+    const match = onclick.match(/toggleVoteFeedback\('([^']+)',\s*'([^']+)'\)/);
+    if (match) {
+      const voteId = match[1];
+      const type = match[2];
+      const key = `vote-feedback-${voteId}-${type}`;
+      const count = parseInt(localStorage.getItem(key) || '0');
+      
+      const countElement = document.getElementById(`${type}-${voteId}`);
+      if (countElement) {
+        countElement.textContent = count;
+      }
+      
+      if (count > 0) {
+        btn.classList.add('active');
+      }
+    }
+  });
 }
 
 // Textarea 자동 높이 조절
@@ -945,3 +2468,549 @@ window.addEventListener('click', (e) => {
     e.target.style.display = 'none';
   }
 });
+
+// 테마 토글 함수
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('athena-theme', newTheme);
+  updateThemeIcon(newTheme);
+}
+
+function updateThemeIcon(theme) {
+  const themeToggle = document.getElementById('themeToggle');
+  if (themeToggle) {
+    themeToggle.textContent = theme === 'dark' ? '🌙' : '☀️';
+  }
+}
+
+// 성능 대시보드 표시
+async function showPerformanceDashboard() {
+  try {
+    // 전체 요약 가져오기
+    const summaryResponse = await fetch(`${API_BASE}/performance/summary`);
+    const summaryData = await summaryResponse.json();
+    
+    // 상세 통계 가져오기
+    const statsResponse = await fetch(`${API_BASE}/performance/stats`);
+    const statsData = await statsResponse.json();
+    
+    const content = document.getElementById('performanceContent');
+    if (!content) return;
+    
+    let html = '<div class="performance-dashboard">';
+    
+    // 전체 요약
+    if (summaryData.success && summaryData.summary && summaryData.summary.length > 0) {
+      html += '<div class="performance-summary">';
+      html += '<h4>📈 전체 성능 요약</h4>';
+      html += '<div class="summary-grid">';
+      
+      summaryData.summary.forEach(stat => {
+        html += `
+          <div class="summary-card">
+            <div class="summary-header">
+              <span class="summary-provider">${getAgentIcon(stat.provider)} ${stat.provider}</span>
+            </div>
+            <div class="summary-stats">
+              <div class="stat-item">
+                <span class="stat-label">총 호출</span>
+                <span class="stat-value">${stat.totalCalls || 0}</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">평균 성공률</span>
+                <span class="stat-value">${((stat.avgSuccessRate || 0) * 100).toFixed(1)}%</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">평균 응답 시간</span>
+                <span class="stat-value">${(stat.avgResponseTime || 0).toFixed(0)}ms</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">작업 유형</span>
+                <span class="stat-value">${stat.taskTypes || 0}개</span>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+      
+      html += '</div></div>';
+    }
+    
+    // 상세 통계
+    if (statsData.success && statsData.stats && statsData.stats.length > 0) {
+      html += '<div class="performance-details">';
+      html += '<h4>📋 작업 유형별 상세 통계</h4>';
+      html += '<div class="stats-table">';
+      html += '<table>';
+      html += '<thead><tr><th>AI</th><th>작업 유형</th><th>성공률</th><th>평균 응답 시간</th><th>총 사용</th></tr></thead>';
+      html += '<tbody>';
+      
+      statsData.stats.forEach(stat => {
+        html += `
+          <tr>
+            <td>${getAgentIcon(stat.provider)} ${stat.provider}</td>
+            <td>${stat.taskType}</td>
+            <td>${((stat.successRate || 0) * 100).toFixed(1)}%</td>
+            <td>${(stat.avgResponseTime || 0).toFixed(0)}ms</td>
+            <td>${stat.totalUses || 0}</td>
+          </tr>
+        `;
+      });
+      
+      html += '</tbody></table></div></div>';
+    } else {
+      html += '<div class="no-data">아직 성능 데이터가 없습니다. AI를 사용하면 통계가 수집됩니다.</div>';
+    }
+    
+    html += '</div>';
+    content.innerHTML = html;
+    openModal('performanceModal');
+  } catch (error) {
+    console.error('Failed to load performance dashboard:', error);
+    alert('성능 대시보드를 불러오는 중 오류가 발생했습니다.');
+  }
+}
+
+// ==================== 음성 입출력 기능 ====================
+
+// 음성 입력 초기화
+function initVoiceInput() {
+  // Web Speech API 지원 확인
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    console.warn('음성 인식 API를 지원하지 않는 브라우저입니다.');
+    if (voiceInputBtn) {
+      voiceInputBtn.style.display = 'none';
+    }
+    return;
+  }
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.lang = voiceSettings.language;
+  recognition.continuous = false;
+  recognition.interimResults = false;
+
+  recognition.onstart = () => {
+    isListening = true;
+    if (voiceIcon) {
+      voiceIcon.textContent = '🔴';
+    }
+    if (voiceInputBtn) {
+      voiceInputBtn.classList.add('listening');
+    }
+    updateThinkingStatus('듣는 중...', '말씀해주세요');
+  };
+
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    messageInput.value = transcript;
+    autoResizeTextarea();
+    stopVoiceInput();
+  };
+
+  recognition.onerror = (event) => {
+    console.error('음성 인식 오류:', event.error);
+    stopVoiceInput();
+    
+    let errorMessage = '음성 인식 중 오류가 발생했습니다.';
+    if (event.error === 'no-speech') {
+      errorMessage = '음성이 감지되지 않았습니다. 다시 시도해주세요.';
+    } else if (event.error === 'not-allowed') {
+      errorMessage = '마이크 권한이 필요합니다. 브라우저 설정에서 마이크 권한을 허용해주세요.';
+    }
+    
+    alert(errorMessage);
+  };
+
+  recognition.onend = () => {
+    stopVoiceInput();
+  };
+}
+
+// 음성 입력 토글
+function toggleVoiceInput() {
+  if (!recognition) {
+    alert('음성 인식 기능을 사용할 수 없습니다.');
+    return;
+  }
+
+  if (isListening) {
+    stopVoiceInput();
+  } else {
+    startVoiceInput();
+  }
+}
+
+// 음성 입력 시작
+function startVoiceInput() {
+  if (!recognition || isListening) return;
+  
+  try {
+    recognition.start();
+  } catch (error) {
+    console.error('음성 입력 시작 오류:', error);
+    alert('음성 입력을 시작할 수 없습니다.');
+  }
+}
+
+// 음성 입력 중지
+function stopVoiceInput() {
+  if (!recognition || !isListening) return;
+  
+  try {
+    recognition.stop();
+  } catch (error) {
+    console.error('음성 입력 중지 오류:', error);
+  }
+  
+  isListening = false;
+  if (voiceIcon) {
+    voiceIcon.textContent = '🎤';
+  }
+  if (voiceInputBtn) {
+    voiceInputBtn.classList.remove('listening');
+  }
+  hideThinking();
+}
+
+// 음성 출력 (Text-to-Speech)
+function speakText(text, options = {}) {
+  if (!voiceSettings.enabled) {
+    return;
+  }
+
+  // 기존 음성 출력 중지
+  if (currentUtterance) {
+    speechSynthesis.cancel();
+  }
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = options.language || voiceSettings.language;
+  utterance.rate = options.rate || voiceSettings.rate;
+  utterance.pitch = options.pitch || voiceSettings.pitch;
+  utterance.volume = (options.volume !== undefined ? options.volume : voiceSettings.volume) / 100;
+
+  // 목소리 선택
+  if (voiceSettings.voiceName) {
+    const voices = speechSynthesis.getVoices();
+    const selectedVoice = voices.find(v => v.name === voiceSettings.voiceName);
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+  }
+
+  utterance.onstart = () => {
+    console.log('음성 출력 시작');
+    updateTTSPauseButton(true);
+  };
+
+  utterance.onend = () => {
+    console.log('음성 출력 완료');
+    currentUtterance = null;
+    isPaused = false;
+    pausedUtterance = null;
+    updateTTSPauseButton(false);
+  };
+
+  utterance.onerror = (event) => {
+    console.error('음성 출력 오류:', event.error);
+    currentUtterance = null;
+    isPaused = false;
+    pausedUtterance = null;
+    updateTTSPauseButton(false);
+  };
+
+  currentUtterance = utterance;
+  speechSynthesis.speak(utterance);
+}
+
+// 음성 출력 중지
+function stopSpeaking() {
+  if (speechSynthesis.speaking) {
+    speechSynthesis.cancel();
+    currentUtterance = null;
+    isPaused = false;
+    pausedUtterance = null;
+    updateTTSPauseButton(false);
+  }
+}
+
+// 음성 출력 일시정지/재개
+function toggleTTSPause() {
+  if (!speechSynthesis.speaking && !isPaused) {
+    return;
+  }
+
+  if (isPaused) {
+    // 재개
+    speechSynthesis.resume();
+    isPaused = false;
+    updateTTSPauseButton(true);
+  } else {
+    // 일시정지
+    speechSynthesis.pause();
+    isPaused = true;
+    updateTTSPauseButton(false, true);
+  }
+}
+
+// TTS 일시정지 버튼 상태 업데이트
+function updateTTSPauseButton(isSpeaking, isPausedState = false) {
+  const ttsPauseBtn = document.getElementById('ttsPauseBtn');
+  if (!ttsPauseBtn) return;
+
+  if (isSpeaking && !isPausedState) {
+    ttsPauseBtn.style.display = 'block';
+    ttsPauseBtn.textContent = '⏸️';
+    ttsPauseBtn.title = '음성 출력 일시정지';
+  } else if (isPausedState) {
+    ttsPauseBtn.style.display = 'block';
+    ttsPauseBtn.textContent = '▶️';
+    ttsPauseBtn.title = '음성 출력 재개';
+  } else {
+    ttsPauseBtn.style.display = 'none';
+  }
+}
+
+// 음성 설정 로드
+function loadVoiceSettings() {
+  const saved = localStorage.getItem('athena-voice-settings');
+  if (saved) {
+    try {
+      voiceSettings = { ...voiceSettings, ...JSON.parse(saved) };
+    } catch (error) {
+      console.error('음성 설정 로드 오류:', error);
+    }
+  }
+  // 설정 로드 후 버튼 상태 업데이트
+  updateTTSButton();
+}
+
+// 음성 설정 저장
+function saveVoiceSettings() {
+  localStorage.setItem('athena-voice-settings', JSON.stringify(voiceSettings));
+  updateTTSButton();
+}
+
+// 음성 설정 모달 열기
+function openVoiceSettingsModal() {
+  const modal = document.getElementById('voiceSettingsModal');
+  if (!modal) return;
+
+  // 현재 설정 로드
+  const languageSelect = document.getElementById('voiceLanguage');
+  const voiceNameSelect = document.getElementById('voiceName');
+  const rateSlider = document.getElementById('voiceRate');
+  const pitchSlider = document.getElementById('voicePitch');
+  const volumeSlider = document.getElementById('voiceVolume');
+
+  if (languageSelect) languageSelect.value = voiceSettings.language;
+  if (rateSlider) rateSlider.value = voiceSettings.rate;
+  if (pitchSlider) pitchSlider.value = voiceSettings.pitch;
+  if (volumeSlider) volumeSlider.value = voiceSettings.volume * 100;
+
+  // 사용 가능한 목소리 목록 로드
+  loadVoices();
+
+  // 슬라이더 값 표시 업데이트
+  updateSliderValues();
+
+  openModal('voiceSettingsModal');
+
+  // 이벤트 리스너 설정
+  setupVoiceSettingsListeners();
+}
+
+// 사용 가능한 목소리 목록 로드
+function loadVoices() {
+  const voiceNameSelect = document.getElementById('voiceName');
+  if (!voiceNameSelect) return;
+
+  // 기존 옵션 제거 (기본 목소리 제외)
+  while (voiceNameSelect.children.length > 1) {
+    voiceNameSelect.removeChild(voiceNameSelect.lastChild);
+  }
+
+  const voices = speechSynthesis.getVoices();
+  const currentLanguage = voiceSettings.language;
+
+  // 현재 언어에 맞는 목소리만 필터링
+  const filteredVoices = voices.filter(voice => voice.lang.startsWith(currentLanguage.split('-')[0]));
+
+  filteredVoices.forEach(voice => {
+    const option = document.createElement('option');
+    option.value = voice.name;
+    option.textContent = `${voice.name} (${voice.lang})`;
+    if (voice.name === voiceSettings.voiceName) {
+      option.selected = true;
+    }
+    voiceNameSelect.appendChild(option);
+  });
+
+  // 목소리가 없으면 기본 목소리 사용
+  if (filteredVoices.length === 0) {
+    voices.forEach(voice => {
+      const option = document.createElement('option');
+      option.value = voice.name;
+      option.textContent = `${voice.name} (${voice.lang})`;
+      voiceNameSelect.appendChild(option);
+    });
+  }
+}
+
+// 슬라이더 값 표시 업데이트
+function updateSliderValues() {
+  const rateValue = document.getElementById('rateValue');
+  const pitchValue = document.getElementById('pitchValue');
+  const volumeValue = document.getElementById('volumeValue');
+  const rateSlider = document.getElementById('voiceRate');
+  const pitchSlider = document.getElementById('voicePitch');
+  const volumeSlider = document.getElementById('voiceVolume');
+
+  if (rateValue && rateSlider) {
+    rateValue.textContent = parseFloat(rateSlider.value).toFixed(1);
+  }
+  if (pitchValue && pitchSlider) {
+    pitchValue.textContent = parseFloat(pitchSlider.value).toFixed(1);
+  }
+  if (volumeValue && volumeSlider) {
+    volumeValue.textContent = parseInt(volumeSlider.value);
+  }
+}
+
+// 음성 설정 이벤트 리스너 설정
+function setupVoiceSettingsListeners() {
+  const languageSelect = document.getElementById('voiceLanguage');
+  const voiceNameSelect = document.getElementById('voiceName');
+  const rateSlider = document.getElementById('voiceRate');
+  const pitchSlider = document.getElementById('voicePitch');
+  const volumeSlider = document.getElementById('voiceVolume');
+  const testBtn = document.getElementById('testVoiceBtn');
+
+  // 언어 변경 시 목소리 목록 업데이트
+  if (languageSelect) {
+    languageSelect.addEventListener('change', (e) => {
+      voiceSettings.language = e.target.value;
+      loadVoices();
+      saveVoiceSettings();
+    });
+  }
+
+  // 목소리 선택
+  if (voiceNameSelect) {
+    voiceNameSelect.addEventListener('change', (e) => {
+      voiceSettings.voiceName = e.target.value;
+      saveVoiceSettings();
+    });
+  }
+
+  // 속도 조절
+  if (rateSlider) {
+    rateSlider.addEventListener('input', (e) => {
+      voiceSettings.rate = parseFloat(e.target.value);
+      updateSliderValues();
+      saveVoiceSettings();
+    });
+  }
+
+  // 음높이 조절
+  if (pitchSlider) {
+    pitchSlider.addEventListener('input', (e) => {
+      voiceSettings.pitch = parseFloat(e.target.value);
+      updateSliderValues();
+      saveVoiceSettings();
+    });
+  }
+
+  // 볼륨 조절
+  if (volumeSlider) {
+    volumeSlider.addEventListener('input', (e) => {
+      voiceSettings.volume = parseInt(e.target.value) / 100;
+      updateSliderValues();
+      saveVoiceSettings();
+    });
+  }
+
+  // 테스트 버튼
+  if (testBtn) {
+    testBtn.addEventListener('click', () => {
+      const testText = languageSelect?.value.startsWith('ko') 
+        ? '안녕하세요, 음성 출력 테스트입니다.'
+        : 'Hello, this is a voice output test.';
+      speakText(testText);
+    });
+  }
+}
+
+// 브라우저가 목소리 목록을 로드할 때까지 대기
+if (speechSynthesis.onvoiceschanged !== undefined) {
+  speechSynthesis.onvoiceschanged = () => {
+    // 목소리 목록이 로드되면 업데이트
+    if (document.getElementById('voiceSettingsModal')?.style.display === 'flex') {
+      loadVoices();
+    }
+  };
+}
+
+// TTS 토글 함수
+function toggleTTS() {
+  voiceSettings.enabled = !voiceSettings.enabled;
+  saveVoiceSettings();
+  
+  // 현재 재생 중인 음성 중지
+  if (!voiceSettings.enabled) {
+    stopSpeaking();
+  }
+  
+  // 사용자에게 알림
+  const status = voiceSettings.enabled ? '켜짐' : '꺼짐';
+  console.log(`TTS ${status}`);
+}
+
+// TTS 버튼 상태 업데이트
+function updateTTSButton() {
+  const ttsToggle = document.getElementById('ttsToggle');
+  if (ttsToggle) {
+    if (voiceSettings.enabled) {
+      ttsToggle.textContent = '🔊';
+      ttsToggle.title = '음성 출력 (TTS) 끄기';
+      ttsToggle.classList.add('active');
+    } else {
+      ttsToggle.textContent = '🔇';
+      ttsToggle.title = '음성 출력 (TTS) 켜기';
+      ttsToggle.classList.remove('active');
+    }
+  }
+}
+
+// AI 응답에 음성 출력 추가
+function addMessageWithVoice(role, content, metadata = null) {
+  addMessage(role, content, metadata);
+  
+  // Assistant 응답인 경우 음성 출력
+  if (role === 'assistant' && voiceSettings.enabled) {
+    // HTML 태그 제거하고 텍스트만 추출
+    const textContent = content.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+    if (textContent.length > 0) {
+      // 약간의 지연 후 음성 출력 (UI 업데이트 후)
+      setTimeout(() => {
+        speakText(textContent);
+      }, 500);
+    }
+  }
+}
+
+// 스트리밍 응답 완료 시 음성 출력
+function handleStreamingComplete(fullContent) {
+  if (voiceSettings.enabled && fullContent) {
+    // HTML 태그 제거하고 텍스트만 추출
+    const textContent = fullContent.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+    if (textContent.length > 0) {
+      setTimeout(() => {
+        speakText(textContent);
+      }, 500);
+    }
+  }
+}

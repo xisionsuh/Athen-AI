@@ -3,6 +3,9 @@ import { OpenAIProvider } from '../ai/providers/openai.js';
 import { GeminiProvider } from '../ai/providers/gemini.js';
 import { ClaudeProvider } from '../ai/providers/claude.js';
 import { GrokProvider } from '../ai/providers/grok.js';
+import { PerformanceMonitor } from '../utils/performanceMonitor.js';
+import { logger } from '../utils/logger.js';
+import { MCPManager } from '../mcp/mcpManager.js';
 
 /**
  * Athena Brain - AI Orchestrator
@@ -23,6 +26,14 @@ export class AthenaOrchestrator {
     this.currentBrain = null;
     this.webSearchEnabled = config.webSearchEnabled || false;
     this.webSearchService = config.webSearchService || null; // WebSearchService 인스턴스
+    this.performanceMonitor = new PerformanceMonitor(config.dbPath);
+    
+    // MCP Manager 초기화
+    this.mcpManager = new MCPManager({
+      workspaceRoot: config.mcpWorkspaceRoot,
+      enabled: config.mcpEnabled !== false, // 기본값: true
+      dbPath: config.dbPath // 데이터베이스 경로 전달
+    });
   }
 
   initializeProviders(config) {
@@ -129,7 +140,7 @@ export class AthenaOrchestrator {
     if (similarDecisions.length > 0) {
       console.log('📚 유사한 과거 결정 발견:', similarDecisions.length, '개');
     }
-    
+
     const response = await brain.chat([
       { role: 'system', content: strategyPrompt },
       { role: 'user', content: userMessage }
@@ -412,7 +423,21 @@ ${learningContext}
       if (isYouTubeVideo) {
         promptAddition = `\n\n## 유튜브 동영상 정보\n다음은 사용자가 요청한 유튜브 동영상의 정보입니다. 이 동영상의 제목, 설명, 채널 정보를 바탕으로 동영상의 내용을 요약하고 분석하세요:\n\n${searchContext}\n\n중요: 동영상의 제목과 설명을 바탕으로 동영상의 주요 내용을 요약하고, 사용자가 요청한 내용(예: 요약, 분석 등)에 맞게 답변하세요. 동영상의 링크도 함께 제공하세요.`;
       } else {
-        promptAddition = `\n\n## 최신 웹 검색 정보\n다음은 최신 정보를 위해 웹에서 검색한 결과입니다. 이 정보를 참고하여 정확하고 최신의 답변을 제공하세요:\n\n${searchContext}\n\n중요: 위의 검색 결과에 포함된 실제 정보를 사용하여 답변하세요. 검색 결과에 날씨 정보가 포함되어 있다면 그 정보를 직접 인용하고 설명하세요. 각 정보의 출처를 명시하세요. 검색 결과를 단순히 링크만 제공하는 것이 아니라, 검색 결과의 내용을 바탕으로 구체적인 답변을 제공하세요.`;
+        // 각 검색 결과에 번호를 매겨서 출처 참조를 쉽게 함
+        const searchContextWithNumbers = searchResults.map((result, index) => {
+          const reliability = this.webSearchService.getSourceReliability(result.link);
+          return `[출처 ${index + 1}]
+제목: ${result.title || '제목 없음'}
+URL: ${result.link}
+내용: ${result.snippet || ''}
+신뢰도: ${reliability}`;
+        }).join('\n\n');
+        
+        promptAddition = `\n\n## 최신 웹 검색 정보\n다음은 최신 정보를 위해 웹에서 검색한 결과입니다. 이 정보를 참고하여 정확하고 최신의 답변을 제공하세요:\n\n${searchContextWithNumbers}\n\n### 출처 표시 규칙:\n1. 검색 결과의 정보를 사용할 때는 반드시 [출처 N] 형식으로 출처를 명시하세요 (N은 위의 번호).
+2. 예시: "서울의 내일 날씨는 맑고 기온은 15도입니다 [출처 1]."
+3. 여러 출처의 정보를 종합할 때는 [출처 1, 출처 2] 형식으로 표시하세요.
+4. 검색 결과에 포함된 실제 정보를 사용하여 답변하세요. 검색 결과에 날씨 정보가 포함되어 있다면 그 정보를 직접 인용하고 설명하세요.
+5. 각 정보의 출처를 명시하세요. 검색 결과를 단순히 링크만 제공하는 것이 아니라, 검색 결과의 내용을 바탕으로 구체적인 답변을 제공하세요.`;
       }
       
       systemPrompt += promptAddition;
@@ -462,6 +487,33 @@ ${learningContext}
       if (content) {
         const chunkJson = JSON.stringify({ type: 'chunk', content }, null, 0);
         yield chunkJson + '\n';
+      }
+    }
+
+    // 스트리밍 완료 후 MCP 도구 호출 처리
+    if (this.mcpManager && this.mcpManager.enabled && fullContent) {
+      const toolResult = await this.mcpManager.processToolCalls(fullContent);
+      if (toolResult.hasToolCalls) {
+        // 도구 실행 결과를 스트리밍으로 전송
+        const toolResultJson = JSON.stringify({ 
+          type: 'tool_result', 
+          data: toolResult.results 
+        }, null, 0);
+        yield toolResultJson + '\n';
+        
+        // 업데이트된 응답 전송
+        const updatedResponseJson = JSON.stringify({ 
+          type: 'updated_response', 
+          content: toolResult.updatedResponse 
+        }, null, 0);
+        yield updatedResponseJson + '\n';
+        
+        logger.info('MCP tools executed in stream', { 
+          toolCount: toolResult.results.length 
+        });
+        
+        // 메모리에 업데이트된 응답 저장
+        fullContent = toolResult.updatedResponse;
       }
     }
 
@@ -541,8 +593,19 @@ ${learningContext}
     
     // 웹 검색 결과가 있으면 시스템 프롬프트에 추가
     if (searchResults && searchResults.length > 0 && this.webSearchService) {
-      const searchContext = this.webSearchService.formatResultsForAI(searchResults);
-      systemPrompt += `\n\n## 최신 웹 검색 정보\n다음은 최신 정보를 위해 웹에서 검색한 결과입니다. 이 정보를 참고하여 정확하고 최신의 답변을 제공하세요:\n\n${searchContext}\n\n중요: 모든 정보는 위의 검색 결과를 기반으로 답변하고, 각 정보의 출처를 명시하세요.`;
+      const searchContextWithNumbers = searchResults.map((result, index) => {
+        const reliability = this.webSearchService.getSourceReliability(result.link);
+        return `[출처 ${index + 1}]
+제목: ${result.title || '제목 없음'}
+URL: ${result.link}
+내용: ${result.snippet || ''}
+신뢰도: ${reliability}`;
+      }).join('\n\n');
+      
+      systemPrompt += `\n\n## 최신 웹 검색 정보\n다음은 최신 정보를 위해 웹에서 검색한 결과입니다. 이 정보를 참고하여 정확하고 최신의 답변을 제공하세요:\n\n${searchContextWithNumbers}\n\n### 출처 표시 규칙:\n1. 검색 결과의 정보를 사용할 때는 반드시 [출처 N] 형식으로 출처를 명시하세요 (N은 위의 번호).
+2. 예시: "서울의 내일 날씨는 맑고 기온은 15도입니다 [출처 1]."
+3. 여러 출처의 정보를 종합할 때는 [출처 1, 출처 2] 형식으로 표시하세요.
+4. 모든 정보는 위의 검색 결과를 기반으로 답변하고, 각 정보의 출처를 명시하세요.`;
     }
 
     const messages = [
@@ -551,18 +614,49 @@ ${learningContext}
       { role: 'user', content: userMessage }
     ];
 
-    const response = await agent.chat(messages);
-
-    return {
-      content: response.content,
-      agentsUsed: [agentName],
-      strategy: 'single',
-      metadata: {
-        provider: response.provider,
-        model: response.model,
-        searchResults: searchResults
+    // 성능 추적 시작
+    const tracking = this.performanceMonitor.startTracking(agentName, strategy.collaborationMode || 'single');
+    
+    try {
+      const startTime = Date.now();
+      let response = await agent.chat(messages);
+      const responseTime = Date.now() - startTime;
+      
+      // MCP 도구 호출 처리
+      if (this.mcpManager && this.mcpManager.enabled) {
+        const toolResult = await this.mcpManager.processToolCalls(response.content);
+        if (toolResult.hasToolCalls) {
+          // 도구 실행 결과를 포함한 업데이트된 응답
+          response.content = toolResult.updatedResponse;
+          logger.info('MCP tools executed', { 
+            toolCount: toolResult.results.length,
+            tools: toolResult.results.map(r => r.tool)
+          });
+        }
       }
-    };
+      
+      // 성공 기록
+      this.performanceMonitor.recordSuccess(tracking, responseTime);
+
+      return {
+        content: response.content,
+        agentsUsed: [agentName],
+        strategy: 'single',
+        metadata: {
+          provider: response.provider,
+          model: response.model,
+          searchResults: searchResults,
+          performance: {
+            responseTime: responseTime
+          }
+        }
+      };
+    } catch (error) {
+      // 실패 기록
+      this.performanceMonitor.recordFailure(tracking, error);
+      logger.logAIError(agentName, error, { mode: 'single' });
+      throw error;
+    }
   }
 
   /**
@@ -577,8 +671,19 @@ ${learningContext}
     
     // 웹 검색 결과가 있으면 시스템 프롬프트에 추가
     if (searchResults && searchResults.length > 0 && this.webSearchService) {
-      const searchContext = this.webSearchService.formatResultsForAI(searchResults);
-      systemPrompt += `\n\n## 최신 웹 검색 정보\n다음은 최신 정보를 위해 웹에서 검색한 결과입니다. 이 정보를 참고하여 정확하고 최신의 답변을 제공하세요:\n\n${searchContext}\n\n중요: 모든 정보는 위의 검색 결과를 기반으로 답변하고, 각 정보의 출처를 명시하세요.`;
+      const searchContextWithNumbers = searchResults.map((result, index) => {
+        const reliability = this.webSearchService.getSourceReliability(result.link);
+        return `[출처 ${index + 1}]
+제목: ${result.title || '제목 없음'}
+URL: ${result.link}
+내용: ${result.snippet || ''}
+신뢰도: ${reliability}`;
+      }).join('\n\n');
+      
+      systemPrompt += `\n\n## 최신 웹 검색 정보\n다음은 최신 정보를 위해 웹에서 검색한 결과입니다. 이 정보를 참고하여 정확하고 최신의 답변을 제공하세요:\n\n${searchContextWithNumbers}\n\n### 출처 표시 규칙:\n1. 검색 결과의 정보를 사용할 때는 반드시 [출처 N] 형식으로 출처를 명시하세요 (N은 위의 번호).
+2. 예시: "서울의 내일 날씨는 맑고 기온은 15도입니다 [출처 1]."
+3. 여러 출처의 정보를 종합할 때는 [출처 1, 출처 2] 형식으로 표시하세요.
+4. 모든 정보는 위의 검색 결과를 기반으로 답변하고, 각 정보의 출처를 명시하세요.`;
     }
 
     const messages = [
@@ -592,15 +697,29 @@ ${learningContext}
       const agent = this.providers[agentName];
       if (!agent || !agent.isAvailable) return null;
 
+      // 성능 추적 시작
+      const tracking = this.performanceMonitor.startTracking(agentName, 'parallel');
+      const startTime = Date.now();
+
       try {
         const response = await agent.chat(messages);
+        const responseTime = Date.now() - startTime;
+        
+        // 성공 기록
+        this.performanceMonitor.recordSuccess(tracking, responseTime);
+        
         return {
           agent: agentName,
           content: response.content,
-          model: response.model
+          model: response.model,
+          performance: {
+            responseTime: responseTime
+          }
         };
       } catch (error) {
-        console.error(`${agentName} error:`, error);
+        // 실패 기록
+        this.performanceMonitor.recordFailure(tracking, error);
+        logger.logAIError(agentName, error, { mode: 'parallel' });
         return null;
       }
     });
@@ -816,8 +935,19 @@ ${votes.map(v => `[${v.agent}]\n${v.response}`).join('\n\n')}
     let systemPrompt = this.buildAthenaSystemPrompt(identity);
     
     if (searchResults && searchResults.length > 0 && this.webSearchService) {
-      const searchContext = this.webSearchService.formatResultsForAI(searchResults);
-      systemPrompt += `\n\n## 최신 웹 검색 정보\n다음은 최신 정보를 위해 웹에서 검색한 결과입니다. 이 정보를 참고하여 정확하고 최신의 답변을 제공하세요:\n\n${searchContext}\n\n중요: 모든 정보는 위의 검색 결과를 기반으로 답변하고, 각 정보의 출처를 명시하세요.`;
+      const searchContextWithNumbers = searchResults.map((result, index) => {
+        const reliability = this.webSearchService.getSourceReliability(result.link);
+        return `[출처 ${index + 1}]
+제목: ${result.title || '제목 없음'}
+URL: ${result.link}
+내용: ${result.snippet || ''}
+신뢰도: ${reliability}`;
+      }).join('\n\n');
+      
+      systemPrompt += `\n\n## 최신 웹 검색 정보\n다음은 최신 정보를 위해 웹에서 검색한 결과입니다. 이 정보를 참고하여 정확하고 최신의 답변을 제공하세요:\n\n${searchContextWithNumbers}\n\n### 출처 표시 규칙:\n1. 검색 결과의 정보를 사용할 때는 반드시 [출처 N] 형식으로 출처를 명시하세요 (N은 위의 번호).
+2. 예시: "서울의 내일 날씨는 맑고 기온은 15도입니다 [출처 1]."
+3. 여러 출처의 정보를 종합할 때는 [출처 1, 출처 2] 형식으로 표시하세요.
+4. 모든 정보는 위의 검색 결과를 기반으로 답변하고, 각 정보의 출처를 명시하세요.`;
     }
 
     const messages = [
@@ -1241,7 +1371,7 @@ ${votes.map(v => `[${v.agent}]\n${v.response}`).join('\n\n')}
   }
 
   buildAthenaSystemPrompt(identity) {
-    return `당신은 Athena입니다. 사용자의 AI 친구이자 비서입니다.
+    let prompt = `당신은 Athena입니다. 사용자의 AI 친구이자 비서입니다.
 
 당신의 특성:
 - 친근하고 따뜻한 대화 스타일
@@ -1256,5 +1386,12 @@ ${identity.map(i => `- ${i.key}: ${JSON.stringify(i.value)}`).join('\n')}
 - 필요시 명확히 질문하여 확인
 - 출처가 있는 정보는 항상 출처 표시
 - 불확실한 내용은 솔직하게 인정`;
+
+    // MCP 도구 정보 추가
+    if (this.mcpManager && this.mcpManager.enabled) {
+      prompt += this.mcpManager.getToolsPrompt();
+    }
+
+    return prompt;
   }
 }

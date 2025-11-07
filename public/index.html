@@ -1,10 +1,14 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Athena AI - Multi-Agent Collaborative System</title>
   <link rel="stylesheet" href="/styles.css">
+  <!-- Prism.js for code highlighting -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
 </head>
 <body>
   <div class="app-container">
@@ -56,6 +60,21 @@
       <div class="chat-header">
         <h2 id="chatTitle">새 대화</h2>
         <div class="header-actions">
+          <button class="icon-btn" id="voiceSettingsBtn" title="음성 설정">
+            🎙️
+          </button>
+          <button class="icon-btn" id="ttsToggle" title="음성 출력 (TTS) 켜기/끄기">
+            🔊
+          </button>
+          <button class="icon-btn" id="ttsPauseBtn" title="음성 출력 일시정지/재개" style="display: none;">
+            ⏸️
+          </button>
+          <button class="icon-btn" id="themeToggle" title="다크/라이트 모드 전환">
+            🌙
+          </button>
+          <button class="icon-btn" id="performanceBtn" title="성능 대시보드">
+            📊
+          </button>
           <button class="icon-btn" id="memoryBtn" title="장기 기억 관리">
             📚
           </button>
@@ -93,21 +112,36 @@
 
       <div class="chat-input-container">
         <div class="thinking-indicator" id="thinkingIndicator" style="display: none;">
-          <div class="thinking-dot"></div>
-          <div class="thinking-dot"></div>
-          <div class="thinking-dot"></div>
-          <span id="thinkingText">생각하는 중...</span>
+          <div class="thinking-dots">
+            <div class="thinking-dot"></div>
+            <div class="thinking-dot"></div>
+            <div class="thinking-dot"></div>
+          </div>
+          <div class="thinking-content">
+            <span id="thinkingText">생각하는 중...</span>
+            <span id="thinkingSubtext" style="display: none; font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.25rem;"></span>
+            <div class="thinking-progress" id="thinkingProgress" style="display: none;">
+              <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <form class="chat-input-form" id="chatForm">
           <textarea
             id="messageInput"
-            placeholder="메시지를 입력하세요... (Shift+Enter로 줄바꿈)"
+            placeholder="메시지를 입력하세요... (Shift+Enter로 줄바꿈, Ctrl+/로 단축키 보기)"
             rows="1"
           ></textarea>
-          <button type="submit" class="send-btn" id="sendBtn">
-            <span>➤</span>
-          </button>
+          <div class="input-actions">
+            <button type="button" class="voice-btn" id="voiceInputBtn" title="음성 입력">
+              <span id="voiceIcon">🎤</span>
+            </button>
+            <button type="submit" class="send-btn" id="sendBtn">
+              <span>➤</span>
+            </button>
+          </div>
         </form>
       </div>
     </main>
@@ -173,6 +207,87 @@
       <div class="modal-body">
         <div id="votingContent">
           <!-- Voting 내용 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 성능 대시보드 모달 -->
+  <div class="modal" id="performanceModal" style="display: none;">
+    <div class="modal-content" style="max-width: 800px;">
+      <div class="modal-header">
+        <h3>📊 성능 대시보드</h3>
+        <button class="close-btn" data-modal="performanceModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="performanceContent">
+          <!-- 성능 통계 내용 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 음성 설정 모달 -->
+  <div class="modal" id="voiceSettingsModal" style="display: none;">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3>🎙️ 음성 설정</h3>
+        <button class="close-btn" data-modal="voiceSettingsModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="voice-settings-content">
+          <!-- 언어 설정 -->
+          <div class="setting-group">
+            <label for="voiceLanguage">언어</label>
+            <select id="voiceLanguage" class="setting-select">
+              <option value="ko-KR">한국어</option>
+              <option value="en-US">English (US)</option>
+              <option value="en-GB">English (UK)</option>
+              <option value="ja-JP">日本語</option>
+              <option value="zh-CN">中文 (简体)</option>
+              <option value="zh-TW">中文 (繁體)</option>
+              <option value="es-ES">Español</option>
+              <option value="fr-FR">Français</option>
+              <option value="de-DE">Deutsch</option>
+            </select>
+          </div>
+
+          <!-- 목소리 선택 -->
+          <div class="setting-group">
+            <label for="voiceName">목소리</label>
+            <select id="voiceName" class="setting-select">
+              <option value="">기본 목소리</option>
+            </select>
+          </div>
+
+          <!-- 속도 조절 -->
+          <div class="setting-group">
+            <label for="voiceRate">
+              속도: <span id="rateValue">1.0</span>x
+            </label>
+            <input type="range" id="voiceRate" min="0.5" max="2.0" step="0.1" value="1.0" class="setting-slider">
+          </div>
+
+          <!-- 음높이 조절 -->
+          <div class="setting-group">
+            <label for="voicePitch">
+              음높이: <span id="pitchValue">1.0</span>
+            </label>
+            <input type="range" id="voicePitch" min="0.5" max="2.0" step="0.1" value="1.0" class="setting-slider">
+          </div>
+
+          <!-- 볼륨 조절 -->
+          <div class="setting-group">
+            <label for="voiceVolume">
+              볼륨: <span id="volumeValue">100</span>%
+            </label>
+            <input type="range" id="voiceVolume" min="0" max="100" step="1" value="100" class="setting-slider">
+          </div>
+
+          <!-- 테스트 버튼 -->
+          <div class="setting-group">
+            <button class="btn btn-secondary" id="testVoiceBtn">음성 테스트</button>
+          </div>
         </div>
       </div>
     </div>

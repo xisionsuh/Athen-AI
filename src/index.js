@@ -11,6 +11,8 @@ import { WebSearchService } from './utils/webSearch.js';
 import { createRoutes } from './server/routes.js';
 import { setupPassport } from './server/auth.js';
 import { createAuthRoutes } from './server/authRoutes.js';
+import { errorHandler } from './utils/errorHandler.js';
+import { logger } from './utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +23,9 @@ dotenv.config();
 // 데이터베이스 초기화
 const dbPath = process.env.DB_PATH || './data/athena.db';
 initializeDatabase(dbPath);
+
+// 로깅 초기화
+logger.info('Athena AI 서버 시작', { port: process.env.PORT || 3000, dbPath });
 
 // Passport 설정
 setupPassport(dbPath);
@@ -38,9 +43,16 @@ const orchestrator = new AthenaOrchestrator({
   openaiApiKey: process.env.OPENAI_API_KEY,
   geminiApiKey: process.env.GOOGLE_AI_API_KEY,
   claudeApiKey: process.env.ANTHROPIC_API_KEY,
-  grokApiKey: process.env.XAI_API_KEY, // .env 파일에서는 XAI_API_KEY로 정의됨
+  grokApiKey: process.env.XAI_API_KEY,
   webSearchEnabled: true,
-  webSearchService: webSearch // WebSearchService 인스턴스 전달
+  webSearchService: webSearch,
+  mcpEnabled: process.env.MCP_ENABLED !== 'false', // 기본값: true
+  mcpWorkspaceRoot: process.env.MCP_WORKSPACE_ROOT || './workspace'
+});
+
+logger.info('Athena Orchestrator 초기화 완료', {
+  providers: ['ChatGPT', 'Gemini', 'Claude', 'Grok'],
+  fallbackOrder: ['ChatGPT', 'Gemini', 'Claude', 'Grok']
 });
 
 // Express 앱 설정
@@ -54,7 +66,7 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === 'production', // HTTPS에서만 쿠키 전송
+      secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
       maxAge: 30 * 24 * 60 * 60 * 1000 // 30일
     }
@@ -100,17 +112,22 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// 에러 핸들러
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(500).json({
-    error: 'Internal Server Error',
-    message: err.message
-  });
-});
+// 에러 핸들러 (모든 라우트 이후에 위치)
+app.use(errorHandler);
 
 // 서버 시작
 app.listen(PORT, () => {
+  logger.info(`🚀 Athena AI 서버가 포트 ${PORT}에서 실행 중입니다.`, {
+    port: PORT,
+    environment: process.env.NODE_ENV || 'development',
+    providers: {
+      ChatGPT: !!process.env.OPENAI_API_KEY,
+      Gemini: !!process.env.GOOGLE_AI_API_KEY,
+      Claude: !!process.env.ANTHROPIC_API_KEY,
+      Grok: !!process.env.XAI_API_KEY
+    }
+  });
+  
   console.log(`
 ╔═══════════════════════════════════════════════════╗
 ║                                                   ║
@@ -127,6 +144,7 @@ ${process.env.ANTHROPIC_API_KEY ? '✓ 3rd' : '✗ 3rd'} Claude (Backup Meta AI)
 ${process.env.XAI_API_KEY ? '✓ 4th' : '✗ 4th'} Grok (Final Backup Meta AI)
 
 Database: ${dbPath}
+Log Level: ${logger.logLevel}
   `);
 });
 

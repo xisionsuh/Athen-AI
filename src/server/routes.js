@@ -1,6 +1,8 @@
 import express from 'express';
 import { AthenaOrchestrator } from '../core/orchestrator.js';
 import { WebSearchService } from '../utils/webSearch.js';
+import { asyncHandler, createErrorResponse } from '../utils/errorHandler.js';
+import { logger } from '../utils/logger.js';
 
 export function createRoutes(orchestrator, webSearch) {
   const router = express.Router();
@@ -9,31 +11,31 @@ export function createRoutes(orchestrator, webSearch) {
    * POST /api/chat
    * 메인 채팅 엔드포인트
    */
-  router.post('/chat', async (req, res) => {
-    try {
+  router.post('/chat', asyncHandler(async (req, res) => {
       const { userId, sessionId, message } = req.body;
 
       if (!userId || !sessionId || !message) {
-        return res.status(400).json({
-          error: '필수 파라미터 누락: userId, sessionId, message'
-        });
-      }
+      const error = new Error('필수 파라미터 누락: userId, sessionId, message');
+      error.status = 400;
+      throw error;
+    }
 
-      // 웹 검색 또는 YouTube 검색이 필요한지 확인
-      // 각 AI의 학습 날짜를 고려하여 자동으로 판단
+    logger.debug('Chat request received', { userId, sessionId, messageLength: message.length });
+
+    // 웹 검색 또는 YouTube 검색이 필요한지 확인
       const needsSearch = webSearch.needsWebSearch(message);
-      const needsYouTube = webSearch.needsYouTubeSearch(message);
-      const hasYouTubeLink = webSearch.hasYouTubeLink(message);
+    const needsYouTube = webSearch.needsYouTubeSearch(message);
+    const hasYouTubeLink = webSearch.hasYouTubeLink(message);
       let searchResults = null;
-      let searchType = null;
+    let searchType = null;
 
-      // 유튜브 링크가 포함된 경우 비디오 정보 가져오기
-      if (hasYouTubeLink) {
-        console.log('📺 유튜브 링크 감지됨');
+    // 유튜브 링크가 포함된 경우 비디오 정보 가져오기
+    if (hasYouTubeLink) {
+      logger.info('📺 유튜브 링크 감지됨');
+      try {
         const videoInfo = await webSearch.getYouTubeVideoFromUrl(message);
         if (videoInfo) {
-          console.log('✅ 유튜브 비디오 정보 가져옴:', videoInfo.title);
-          // 비디오 정보를 검색 결과 형식으로 변환
+          logger.info('✅ 유튜브 비디오 정보 가져옴', { title: videoInfo.title });
           searchResults = [{
             title: videoInfo.title,
             link: videoInfo.link,
@@ -46,22 +48,40 @@ export function createRoutes(orchestrator, webSearch) {
           }];
           searchType = 'youtube_video';
         } else {
-          console.log('⚠️ 유튜브 비디오 정보를 가져올 수 없습니다.');
+          logger.warn('⚠️ 유튜브 비디오 정보를 가져올 수 없습니다.');
         }
-      } else if (needsYouTube) {
-        // YouTube 검색
+      } catch (error) {
+        logger.logWebSearchError(error, message, { type: 'youtube_video' });
+      }
+    } else if (needsYouTube) {
+      try {
         const searchData = await webSearch.search(message, { type: 'youtube' });
         searchResults = searchData.results;
         searchType = 'youtube';
-      } else if (needsSearch) {
-        // 일반 웹 검색
+        logger.info('YouTube 검색 완료', { resultsCount: searchResults?.length || 0 });
+      } catch (error) {
+        logger.logWebSearchError(error, message, { type: 'youtube' });
+      }
+    } else if (needsSearch) {
+      try {
         const searchData = await webSearch.search(message);
         searchResults = searchData.results;
         searchType = 'web';
+        logger.info('웹 검색 완료', { resultsCount: searchResults?.length || 0 });
+      } catch (error) {
+        logger.logWebSearchError(error, message, { type: 'web' });
+        searchResults = null;
       }
+    }
 
-      // Orchestrator를 통해 처리 (검색 결과 전달)
-      const result = await orchestrator.process(userId, sessionId, message, searchResults);
+    // Orchestrator를 통해 처리 (검색 결과 전달)
+    const result = await orchestrator.process(userId, sessionId, message, searchResults);
+
+    logger.info('Chat response generated', {
+      strategy: result.strategy,
+      agentsUsed: result.agentsUsed,
+      hasSearchResults: !!searchResults
+    });
 
       res.json({
         success: true,
@@ -70,57 +90,49 @@ export function createRoutes(orchestrator, webSearch) {
           strategy: result.strategy,
           agentsUsed: result.agentsUsed,
           searchResults: searchResults,
-          searchType: searchType,
+        searchType: searchType,
           ...result.metadata
         }
       });
-    } catch (error) {
-      console.error('Chat error:', error);
-      res.status(500).json({
-        error: 'Internal server error',
-        message: error.message
-      });
-    }
-  });
+  }));
 
   /**
    * POST /api/chat/stream
    * 스트리밍 채팅
    */
-  router.post('/chat/stream', async (req, res) => {
+  router.post('/chat/stream', asyncHandler(async (req, res) => {
     const { userId, sessionId, message } = req.body;
 
     if (!userId || !sessionId || !message) {
-      return res.status(400).json({
-        error: '필수 파라미터 누락: userId, sessionId, message'
-      });
+      const error = new Error('필수 파라미터 누락: userId, sessionId, message');
+      error.status = 400;
+      throw error;
     }
+
+    logger.debug('Stream chat request received', { userId, sessionId, messageLength: message.length });
 
     // SSE 헤더 설정 (먼저 설정하여 스트리밍 시작)
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // Nginx 버퍼링 방지
+    res.setHeader('X-Accel-Buffering', 'no');
 
+    // 웹 검색 또는 YouTube 검색이 필요한지 확인
+    let searchResults = null;
+    
     try {
-      // 웹 검색 또는 YouTube 검색이 필요한지 확인 (에러 발생해도 계속 진행)
-      let searchResults = null;
-      let searchType = null;
-      
-      try {
-        const needsSearch = webSearch.needsWebSearch(message);
-        const needsYouTube = webSearch.needsYouTubeSearch(message);
-        const hasYouTubeLink = webSearch.hasYouTubeLink(message);
+      const needsSearch = webSearch.needsWebSearch(message);
+      const needsYouTube = webSearch.needsYouTubeSearch(message);
+      const hasYouTubeLink = webSearch.hasYouTubeLink(message);
 
-        console.log('🔍 검색 필요 여부 확인:', { needsSearch, needsYouTube, hasYouTubeLink, message });
+      logger.debug('검색 필요 여부 확인', { needsSearch, needsYouTube, hasYouTubeLink });
 
-        // 유튜브 링크가 포함된 경우 비디오 정보 가져오기
-        if (hasYouTubeLink) {
-          console.log('📺 유튜브 링크 감지됨');
+      if (hasYouTubeLink) {
+        logger.info('📺 유튜브 링크 감지됨 (스트리밍)');
+        try {
           const videoInfo = await webSearch.getYouTubeVideoFromUrl(message);
           if (videoInfo) {
-            console.log('✅ 유튜브 비디오 정보 가져옴:', videoInfo.title);
-            // 비디오 정보를 검색 결과 형식으로 변환
+            logger.info('✅ 유튜브 비디오 정보 가져옴 (스트리밍)', { title: videoInfo.title });
             searchResults = [{
               title: videoInfo.title,
               link: videoInfo.link,
@@ -131,325 +143,317 @@ export function createRoutes(orchestrator, webSearch) {
               channelTitle: videoInfo.channelTitle,
               publishedAt: videoInfo.publishedAt
             }];
-            searchType = 'youtube_video';
-          } else {
-            console.log('⚠️ 유튜브 비디오 정보를 가져올 수 없습니다.');
           }
-        } else if (needsYouTube) {
-          // YouTube 검색
-          console.log('📺 YouTube 검색 실행:', message);
+        } catch (error) {
+          logger.logWebSearchError(error, message, { type: 'youtube_video', mode: 'stream' });
+        }
+      } else if (needsYouTube) {
+        try {
           const searchData = await webSearch.search(message, { type: 'youtube' });
           searchResults = searchData.results;
-          searchType = 'youtube';
-          console.log('📺 YouTube 검색 결과:', searchResults?.length || 0, '개');
-          console.log('📺 searchResults 타입:', typeof searchResults, Array.isArray(searchResults));
-        } else if (needsSearch) {
-          // 일반 웹 검색
-          console.log('🌐 웹 검색 실행:', message);
+          logger.info('YouTube 검색 완료 (스트리밍)', { resultsCount: searchResults?.length || 0 });
+        } catch (error) {
+          logger.logWebSearchError(error, message, { type: 'youtube', mode: 'stream' });
+        }
+      } else if (needsSearch) {
+        try {
           const searchData = await webSearch.search(message);
-          console.log('🌐 searchData:', JSON.stringify(searchData).substring(0, 200));
           searchResults = searchData.results;
-          searchType = 'web';
-          console.log('🌐 웹 검색 결과:', searchResults?.length || 0, '개');
-          console.log('🌐 searchResults 타입:', typeof searchResults, Array.isArray(searchResults));
-          if (searchResults && searchResults.length > 0) {
-            console.log('🌐 첫 번째 검색 결과:', searchResults[0].title);
-          } else {
-            console.log('⚠️ 검색 결과가 비어있습니다.');
-          }
-        } else {
-          console.log('ℹ️ 웹 검색이 필요하지 않습니다.');
+          logger.info('웹 검색 완료 (스트리밍)', { resultsCount: searchResults?.length || 0 });
+        } catch (error) {
+          logger.logWebSearchError(error, message, { type: 'web', mode: 'stream' });
+          searchResults = null;
         }
-      } catch (searchError) {
-        console.error('❌ Web search error (continuing without search):', searchError);
-        console.error('❌ Error stack:', searchError.stack);
-        // 웹 검색 실패해도 스트리밍은 계속 진행
-        searchResults = null;
       }
-
-      console.log('📤 orchestrator.processStream 호출 전 searchResults:', searchResults?.length || 0, '개');
-
-      // 스트리밍 처리 (검색 결과 전달)
-      try {
-        for await (const chunk of orchestrator.processStream(userId, sessionId, message, searchResults)) {
-          // chunk는 이미 JSON 문자열 + \n 형식이므로 SSE 형식으로 전송
-          // chunk 예: '{"type":"chunk","content":"안녕"}\n'
-          res.write(`data: ${chunk.trim()}\n\n`);
-        }
-        res.write('data: [DONE]\n\n');
-      } catch (streamError) {
-        console.error('Streaming error:', streamError);
-        const errorJson = JSON.stringify({ type: 'error', error: streamError.message }, null, 0);
-        res.write(`data: ${errorJson}\n\n`);
-      }
-
-      res.end();
-    } catch (error) {
-      console.error('Chat stream error:', error);
-      // SSE 헤더가 이미 설정되어 있으므로 JSON 대신 SSE 형식으로 에러 전송
-      const errorJson = JSON.stringify({ type: 'error', error: error.message }, null, 0);
-      res.write(`data: ${errorJson}\n\n`);
-      res.write('data: [DONE]\n\n');
-      res.end();
+    } catch (searchError) {
+      logger.logWebSearchError(searchError, message, { mode: 'stream' });
+      searchResults = null;
     }
-  });
+
+    logger.debug('orchestrator.processStream 호출 전', { searchResultsCount: searchResults?.length || 0 });
+
+    // 스트리밍 처리
+    try {
+      for await (const chunk of orchestrator.processStream(userId, sessionId, message, searchResults)) {
+        res.write(`data: ${chunk.trim()}\n\n`);
+      }
+      res.write('data: [DONE]\n\n');
+    } catch (streamError) {
+      logger.error('Streaming error', streamError, { userId, sessionId });
+      const errorJson = JSON.stringify({ type: 'error', error: streamError.message }, null, 0);
+      res.write(`data: ${errorJson}\n\n`);
+    }
+
+    res.end();
+  }));
 
   /**
    * POST /api/session/new
    * 새 세션 생성
    */
-  router.post('/session/new', async (req, res) => {
-    try {
-      const { userId, title } = req.body;
+  router.post('/session/new', asyncHandler(async (req, res) => {
+    const { userId, title } = req.body;
 
-      if (!userId) {
-        return res.status(400).json({ error: 'userId 필요' });
-      }
-
-      // 사용자가 없으면 자동 생성
-      try {
-        const userStmt = orchestrator.memory.db.prepare(`
-          INSERT OR IGNORE INTO users (id, email, name, last_login)
-          VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        `);
-        userStmt.run(userId, `${userId}@athena.ai`, userId);
-      } catch (userError) {
-        console.log('User already exists or creation failed:', userError.message);
-      }
-
-      const sessionId = orchestrator.memory.createSession(userId, title);
-
-      res.json({
-        success: true,
-        sessionId
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+    if (!userId) {
+      const error = new Error('userId 필요');
+      error.status = 400;
+      throw error;
     }
-  });
+
+    // 사용자가 없으면 자동 생성
+    try {
+      const userStmt = orchestrator.memory.db.prepare(`
+        INSERT OR IGNORE INTO users (id, email, name, last_login)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      `);
+      userStmt.run(userId, `${userId}@athena.ai`, userId);
+    } catch (userError) {
+      logger.warn('User creation failed', userError, { userId });
+    }
+
+    const sessionId = orchestrator.memory.createSession(userId, title);
+    logger.info('Session created', { userId, sessionId, title });
+
+    res.json({
+      success: true,
+      sessionId
+    });
+  }));
 
   /**
    * GET /api/session/:sessionId
    * 세션 정보 조회
    */
-  router.get('/session/:sessionId', async (req, res) => {
-    try {
-      const { sessionId } = req.params;
-      const session = orchestrator.memory.getSession(sessionId);
+  router.get('/session/:sessionId', asyncHandler(async (req, res) => {
+    const { sessionId } = req.params;
+    const session = orchestrator.memory.getSession(sessionId);
 
-      if (!session) {
-        return res.status(404).json({ error: '세션을 찾을 수 없습니다' });
-      }
-
-      const messages = orchestrator.memory.getShortTermMemory(sessionId);
-
-      res.json({
-        success: true,
-        session,
-        messages
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+    if (!session) {
+      const error = new Error('세션을 찾을 수 없습니다');
+      error.status = 404;
+      throw error;
     }
-  });
+
+    const messages = orchestrator.memory.getShortTermMemory(sessionId);
+
+    res.json({
+      success: true,
+      session,
+      messages
+    });
+  }));
 
   /**
    * DELETE /api/session/:sessionId
    * 세션 삭제
    */
-  router.delete('/session/:sessionId', async (req, res) => {
-    try {
-      const { sessionId } = req.params;
-      orchestrator.memory.deleteSession(sessionId);
+  router.delete('/session/:sessionId', asyncHandler(async (req, res) => {
+    const { sessionId } = req.params;
+    orchestrator.memory.deleteSession(sessionId);
+    logger.info('Session deleted', { sessionId });
 
-      res.json({
-        success: true,
-        message: '세션이 삭제되었습니다'
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+    res.json({
+      success: true,
+      message: '세션이 삭제되었습니다'
+    });
+  }));
 
   /**
    * GET /api/sessions/:userId
    * 사용자의 모든 세션 조회
    */
-  router.get('/sessions/:userId', async (req, res) => {
-    try {
-      const { userId } = req.params;
-      const sessions = orchestrator.memory.getUserSessions(userId);
+  router.get('/sessions/:userId', asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    const sessions = orchestrator.memory.getUserSessions(userId);
 
-      res.json({
-        success: true,
-        sessions
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+    res.json({
+      success: true,
+      sessions
+    });
+  }));
 
   /**
    * POST /api/memory/long-term
    * 장기 기억 추가
    */
-  router.post('/memory/long-term', async (req, res) => {
-    try {
-      const { userId, category, title, content, tags, importance } = req.body;
+  router.post('/memory/long-term', asyncHandler(async (req, res) => {
+    const { userId, category, title, content, tags, importance } = req.body;
 
-      const result = orchestrator.memory.addLongTermMemory(
-        userId,
-        category,
-        title,
-        content,
-        tags || [],
-        importance || 5
-      );
+    const result = orchestrator.memory.addLongTermMemory(
+      userId,
+      category,
+      title,
+      content,
+      tags || [],
+      importance || 5
+    );
 
-      res.json({
-        success: true,
-        memoryId: result.lastInsertRowid
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+    logger.info('Long-term memory added', { userId, category, title });
+
+    res.json({
+      success: true,
+      memoryId: result.lastInsertRowid
+    });
+  }));
 
   /**
    * GET /api/memory/long-term/:userId
    * 장기 기억 조회
    */
-  router.get('/memory/long-term/:userId', async (req, res) => {
-    try {
-      const { userId } = req.params;
-      const { category } = req.query;
+  router.get('/memory/long-term/:userId', asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    const { category } = req.query;
 
-      const memories = orchestrator.memory.getLongTermMemory(userId, category);
+    const memories = orchestrator.memory.getLongTermMemory(userId, category);
 
-      res.json({
-        success: true,
-        memories
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+    res.json({
+      success: true,
+      memories
+    });
+  }));
 
   /**
    * GET /api/memory/search/:userId
    * 장기 기억 검색
    */
-  router.get('/memory/search/:userId', async (req, res) => {
-    try {
-      const { userId } = req.params;
-      const { q } = req.query;
+  router.get('/memory/search/:userId', asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    const { q } = req.query;
 
-      if (!q) {
-        return res.status(400).json({ error: '검색어(q) 필요' });
-      }
-
-      const results = orchestrator.memory.searchLongTermMemory(userId, q);
-
-      res.json({
-        success: true,
-        results
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+    if (!q) {
+      const error = new Error('검색어(q) 필요');
+      error.status = 400;
+      throw error;
     }
-  });
+
+    const results = orchestrator.memory.searchLongTermMemory(userId, q);
+
+    res.json({
+      success: true,
+      results
+    });
+  }));
 
   /**
    * GET /api/decision-log/:sessionId
    * 의사결정 로그 조회
    */
-  router.get('/decision-log/:sessionId', async (req, res) => {
-    try {
-      const { sessionId } = req.params;
-      const log = orchestrator.memory.getDecisionLog(sessionId);
+  router.get('/decision-log/:sessionId', asyncHandler(async (req, res) => {
+    const { sessionId } = req.params;
+    const log = orchestrator.memory.getDecisionLog(sessionId);
 
-      res.json({
-        success: true,
-        log
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+    res.json({
+      success: true,
+      log
+    });
+  }));
 
   /**
    * GET /api/health
    * AI 프로바이더 상태 확인
    */
-  router.get('/health', async (req, res) => {
-    try {
-      const status = {};
+  router.get('/health', asyncHandler(async (req, res) => {
+    const status = {};
 
-      for (const [name, provider] of Object.entries(orchestrator.providers)) {
-        status[name] = provider.getStatus();
-      }
-
-      res.json({
-        success: true,
-        providers: status,
-        currentBrain: orchestrator.currentBrain?.name || null
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+    for (const [name, provider] of Object.entries(orchestrator.providers)) {
+      status[name] = provider.getStatus();
     }
-  });
+
+    res.json({
+      success: true,
+      providers: status,
+      currentBrain: orchestrator.currentBrain?.name || null
+    });
+  }));
 
   /**
    * POST /api/search
    * 웹 검색 엔드포인트
    */
-  router.post('/search', async (req, res) => {
-    try {
-      const { query, numResults, type } = req.body;
+  router.post('/search', asyncHandler(async (req, res) => {
+    const { query, numResults, type } = req.body;
 
-      if (!query) {
-        return res.status(400).json({ error: '검색어(query) 필요' });
-      }
-
-      const results = await webSearch.search(query, { 
-        numResults: numResults || 5,
-        type: type || 'web' // 'web' or 'youtube'
-      });
-
-      res.json({
-        success: true,
-        ...results
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+    if (!query) {
+      const error = new Error('검색어(query) 필요');
+      error.status = 400;
+      throw error;
     }
-  });
+
+    const results = await webSearch.search(query, { 
+      numResults: numResults || 5,
+      type: type || 'web'
+    });
+
+    res.json({
+      success: true,
+      ...results
+    });
+  }));
 
   /**
    * POST /api/search/youtube
    * YouTube 검색 전용 엔드포인트
    */
-  router.post('/search/youtube', async (req, res) => {
-    try {
-      const { query, numResults } = req.body;
+  router.post('/search/youtube', asyncHandler(async (req, res) => {
+    const { query, numResults } = req.body;
 
-      if (!query) {
-        return res.status(400).json({ error: '검색어(query) 필요' });
-      }
-
-      const results = await webSearch.search(query, { 
-        numResults: numResults || 5,
-        type: 'youtube'
-      });
-
-      res.json({
-        success: true,
-        ...results
-      });
-    } catch (error) {
-      res.status(500).json({ error: error.message });
+    if (!query) {
+      const error = new Error('검색어(query) 필요');
+      error.status = 400;
+      throw error;
     }
-  });
+
+    const results = await webSearch.search(query, { 
+      numResults: numResults || 5,
+      type: 'youtube'
+    });
+
+    res.json({
+      success: true,
+      ...results
+    });
+  }));
+
+  /**
+   * GET /api/performance/stats
+   * 성능 통계 조회
+   */
+  router.get('/performance/stats', asyncHandler(async (req, res) => {
+    const { provider, taskType } = req.query;
+    const stats = orchestrator.performanceMonitor.getPerformanceStats(provider, taskType);
+
+    res.json({
+      success: true,
+      stats
+    });
+  }));
+
+  /**
+   * GET /api/performance/summary
+   * 성능 요약 조회
+   */
+  router.get('/performance/summary', asyncHandler(async (req, res) => {
+    const summary = orchestrator.performanceMonitor.getSummary();
+
+    res.json({
+      success: true,
+      summary
+    });
+  }));
+
+  /**
+   * GET /api/performance/best/:taskType
+   * 특정 작업에 대한 최적 AI 추천
+   */
+  router.get('/performance/best/:taskType', asyncHandler(async (req, res) => {
+    const { taskType } = req.params;
+    const bestProvider = orchestrator.performanceMonitor.getBestProviderForTask(taskType);
+
+    res.json({
+      success: true,
+      bestProvider
+    });
+  }));
 
   return router;
 }

@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AIProvider } from './base.js';
 
 export class GeminiProvider extends AIProvider {
-  constructor(apiKey, model = 'gemini-2.0-flash-exp') {
+  constructor(apiKey, model = 'gemini-2.5-flash') {
     super('Gemini', apiKey);
     this.client = new GoogleGenerativeAI(apiKey);
     this.model = model;
