@@ -1,6 +1,8 @@
 node_modules/
 data/*.db
 data/*.db-journal
+data/*.db-shm
+data/*.db-wal
 *.log
 .env
 backup_*.tar.gz
