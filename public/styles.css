@@ -2873,8 +2873,6 @@ kbd + kbd {
   z-index: 1;
   position: relative;
 }
-  border: 1px solid var(--border-color);
-}
 
 .performance-details {
   background: var(--surface);
