@@ -983,6 +983,64 @@ export function createRoutes(orchestrator, webSearch) {
   }));
 
   /**
+   * GET /api/plugins
+   * 플러그인 목록 조회
+   */
+  router.get('/plugins', asyncHandler(async (req, res) => {
+    if (!orchestrator.pluginLoader) {
+      return res.json({ success: true, plugins: [] });
+    }
+
+    const plugins = orchestrator.pluginLoader.getPlugins();
+    res.json({
+      success: true,
+      plugins
+    });
+  }));
+
+  /**
+   * POST /api/plugins/:pluginName/activate
+   * 플러그인 활성화
+   */
+  router.post('/plugins/:pluginName/activate', asyncHandler(async (req, res) => {
+    const { pluginName } = req.params;
+
+    if (!orchestrator.pluginLoader) {
+      const error = new Error('Plugin system is not enabled');
+      error.status = 503;
+      throw error;
+    }
+
+    await orchestrator.pluginLoader.activatePlugin(pluginName);
+
+    res.json({
+      success: true,
+      message: `Plugin ${pluginName} activated`
+    });
+  }));
+
+  /**
+   * POST /api/plugins/:pluginName/deactivate
+   * 플러그인 비활성화
+   */
+  router.post('/plugins/:pluginName/deactivate', asyncHandler(async (req, res) => {
+    const { pluginName } = req.params;
+
+    if (!orchestrator.pluginLoader) {
+      const error = new Error('Plugin system is not enabled');
+      error.status = 503;
+      throw error;
+    }
+
+    await orchestrator.pluginLoader.deactivatePlugin(pluginName);
+
+    res.json({
+      success: true,
+      message: `Plugin ${pluginName} deactivated`
+    });
+  }));
+
+  /**
    * GET /api/voting/feedback/:sessionId/:voteId
    * Voting 선택 피드백 통계 조회
    */

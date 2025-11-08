@@ -19,6 +19,8 @@ const performanceBtn = document.getElementById('performanceBtn');
 const performanceModal = document.getElementById('performanceModal');
 const learningBtn = document.getElementById('learningBtn');
 const learningModal = document.getElementById('learningModal');
+const pluginsBtn = document.getElementById('pluginsBtn');
+const pluginsModal = document.getElementById('pluginsModal');
 const voiceInputBtn = document.getElementById('voiceInputBtn');
 const voiceIcon = document.getElementById('voiceIcon');
 const fileUploadBtn = document.getElementById('fileUploadBtn');
@@ -122,6 +124,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   if (learningBtn) {
     learningBtn.addEventListener('click', () => showLearningDashboard());
+  }
+  
+  if (pluginsBtn) {
+    pluginsBtn.addEventListener('click', () => showPluginsDashboard());
   }
   
   // 웹 브라우저 제어 버튼
@@ -4907,3 +4913,90 @@ function renderSatisfactionTrendChart(trend) {
     }
   });
 }
+
+// 플러그인 관리 대시보드 표시
+async function showPluginsDashboard() {
+  try {
+    const response = await fetch(`${API_BASE}/plugins`);
+    const data = await response.json();
+
+    const content = document.getElementById('pluginsContent');
+    if (!content) return;
+
+    let html = '<div class="plugins-dashboard">';
+
+    if (data.success && data.plugins && data.plugins.length > 0) {
+      html += '<div class="plugins-list">';
+      data.plugins.forEach(plugin => {
+        const statusClass = plugin.enabled ? 'plugin-enabled' : 'plugin-disabled';
+        const statusText = plugin.enabled ? '활성화됨' : '비활성화됨';
+        const statusIcon = plugin.enabled ? '✅' : '❌';
+        
+        html += `
+          <div class="plugin-item ${statusClass}">
+            <div class="plugin-info">
+              <div class="plugin-header">
+                <h4>${plugin.name}</h4>
+                <span class="plugin-status ${statusClass}">${statusIcon} ${statusText}</span>
+              </div>
+              <p class="plugin-description">${plugin.description || '설명 없음'}</p>
+              <div class="plugin-meta">
+                <span class="plugin-version">버전: ${plugin.version || '1.0.0'}</span>
+              </div>
+            </div>
+            <div class="plugin-actions">
+              ${plugin.enabled 
+                ? `<button class="btn btn-secondary" onclick="togglePlugin('${plugin.name}', false)">비활성화</button>`
+                : `<button class="btn btn-primary" onclick="togglePlugin('${plugin.name}', true)">활성화</button>`
+              }
+            </div>
+          </div>
+        `;
+      });
+      html += '</div>';
+    } else {
+      html += '<div class="no-plugins">';
+      html += '<p>설치된 플러그인이 없습니다.</p>';
+      html += '<p class="plugin-hint">💡 플러그인을 추가하려면 <code>plugins/</code> 디렉토리에 플러그인 파일을 추가하세요.</p>';
+      html += '</div>';
+    }
+
+    html += '</div>';
+    content.innerHTML = html;
+    openModal('pluginsModal');
+  } catch (error) {
+    console.error('Failed to load plugins dashboard:', error);
+    const content = document.getElementById('pluginsContent');
+    if (content) {
+      content.innerHTML = '<div class="error-message">플러그인 목록을 불러오는 중 오류가 발생했습니다: ' + error.message + '</div>';
+    }
+  }
+}
+
+// 플러그인 활성화/비활성화 토글
+async function togglePlugin(pluginName, activate) {
+  try {
+    const endpoint = activate 
+      ? `${API_BASE}/plugins/${pluginName}/activate`
+      : `${API_BASE}/plugins/${pluginName}/deactivate`;
+    
+    const response = await fetch(endpoint, {
+      method: 'POST'
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      // 플러그인 목록 새로고침
+      await showPluginsDashboard();
+    } else {
+      alert('플러그인 상태 변경 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to toggle plugin:', error);
+    alert('플러그인 상태 변경 중 오류가 발생했습니다: ' + error.message);
+  }
+}
+
+// 전역 함수로 등록
+window.togglePlugin = togglePlugin;
