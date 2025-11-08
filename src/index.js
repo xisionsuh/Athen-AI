@@ -48,7 +48,9 @@ const orchestrator = new AthenaOrchestrator({
   webSearchEnabled: true,
   webSearchService: webSearch,
   mcpEnabled: process.env.MCP_ENABLED !== 'false', // 기본값: true
-  mcpWorkspaceRoot: process.env.MCP_WORKSPACE_ROOT || './workspace'
+  mcpWorkspaceRoot: process.env.MCP_WORKSPACE_ROOT || './workspace',
+  pluginsEnabled: process.env.PLUGINS_ENABLED !== 'false', // 기본값: true
+  pluginsDir: process.env.PLUGINS_DIR || './plugins'
 });
 
 logger.info('Athena Orchestrator 초기화 완료', {

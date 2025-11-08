@@ -34,6 +34,14 @@ export class AthenaOrchestrator {
       enabled: config.mcpEnabled !== false, // 기본값: true
       dbPath: config.dbPath // 데이터베이스 경로 전달
     });
+    
+    // Plugin Loader 초기화
+    this.pluginLoader = new PluginLoader(config.pluginsDir);
+    if (config.pluginsEnabled !== false) {
+      this.pluginLoader.loadPlugins().catch(error => {
+        logger.error('Failed to load plugins', error);
+      });
+    }
   }
 
   initializeProviders(config) {
@@ -690,6 +698,11 @@ URL: ${result.link}
         agents_used: result.agentsUsed,
         search_results: searchResults ? searchResults.length : 0
       });
+
+      // 5. 플러그인 훅: 응답 후처리
+      if (this.pluginLoader) {
+        result.content = await this.pluginLoader.executeHook('afterMessage', result.content, userId, sessionId);
+      }
 
       return result;
     } catch (error) {
