@@ -83,6 +83,9 @@
           <button class="icon-btn" id="performanceBtn" title="성능 대시보드">
             📊
           </button>
+          <button class="icon-btn" id="learningBtn" title="학습 결과 시각화">
+            📈
+          </button>
           <button class="icon-btn" id="browserControlBtn" title="웹 브라우저 제어">
             🌐
           </button>
@@ -233,6 +236,21 @@
       <div class="modal-body">
         <div id="performanceContent">
           <!-- 성능 통계 내용 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 학습 결과 시각화 모달 -->
+  <div class="modal" id="learningModal" style="display: none;">
+    <div class="modal-content" style="max-width: 900px;">
+      <div class="modal-header">
+        <h3>📈 학습 결과 시각화</h3>
+        <button class="close-btn" data-modal="learningModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="learningContent">
+          <!-- 학습 결과 내용 -->
         </div>
       </div>
     </div>
