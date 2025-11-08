@@ -3871,47 +3871,6 @@ function renderProviderComparisonChart(comparisonData) {
   });
 }
 
-// 성능 히스토리 그래프 렌더링
-function renderPerformanceHistoryChart(history) {
-  const ctx = document.getElementById('performanceHistoryChart');
-  if (!ctx) return;
-  
-  // 시간별로 그룹화
-  const timeGroups = {};
-  history.forEach(item => {
-    const time = new Date(item.hourTimestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-    if (!timeGroups[time]) {
-      timeGroups[time] = { responseTime: [], successRate: [] };
-    }
-    timeGroups[time].responseTime.push(item.responseTime);
-    timeGroups[time].successRate.push(item.successRate);
-  });
-  
-  const labels = Object.keys(timeGroups).sort();
-  const avgResponseTime = labels.map(time => {
-    const times = timeGroups[time].responseTime;
-    return times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : 0;
-  });
-  const avgSuccessRate = labels.map(time => {
-    const rates = timeGroups[time].successRate;
-    return rates.length > 0 ? rates.reduce((a, b) => a + b, 0) / rates.length : 0;
-  });
-  
-  new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: labels,
-      datasets: [
-        {
-          label: '평균 응답 시간 (ms)',
-          data: avgResponseTime,
-          borderColor: 'rgb(102, 126, 234)',
-          backgroundColor: 'rgba(102, 126, 234, 0.1)',
-          yAxisID: 'y',
-          tension: 0.4
-        },
-        {
-          label: '성공률 (%)',
           data: avgSuccessRate.map(r => r * 100),
           borderColor: 'rgb(76, 175, 80)',
           backgroundColor: 'rgba(76, 175, 80, 0.1)',
