@@ -691,6 +691,16 @@ export function createRoutes(orchestrator, webSearch) {
       VALUES (?, ?, ?, ?)
     `).run(sessionId, debateId, feedbackType, userId || null);
     
+    // 학습 시스템 업데이트 (debateId에서 agent 정보 추출)
+    try {
+      const agentName = debateId.split('-')[0]; // debateId 형식: "ChatGPT-round1" 등
+      if (agentName && orchestrator) {
+        orchestrator.updateLearningFromFeedback(userId, agentName, 'debate', feedbackType);
+      }
+    } catch (error) {
+      logger.error('Failed to update learning from debate feedback', error);
+    }
+    
     res.json({
       success: true,
       message: '피드백이 저장되었습니다'
@@ -753,6 +763,16 @@ export function createRoutes(orchestrator, webSearch) {
       INSERT INTO voting_feedback (session_id, vote_id, feedback_type, user_id)
       VALUES (?, ?, ?, ?)
     `).run(sessionId, voteId, feedbackType, userId || null);
+    
+    // 학습 시스템 업데이트 (voteId에서 agent 정보 추출)
+    try {
+      const agentName = voteId.split('-')[0]; // voteId 형식: "ChatGPT-choice1" 등
+      if (agentName && orchestrator) {
+        orchestrator.updateLearningFromFeedback(userId, agentName, 'voting', feedbackType);
+      }
+    } catch (error) {
+      logger.error('Failed to update learning from voting feedback', error);
+    }
     
     res.json({
       success: true,

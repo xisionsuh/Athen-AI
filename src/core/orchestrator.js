@@ -273,15 +273,55 @@ ${learningContext}
   }
 
   /**
-   * AI 특성 기반 에이전트 선택 최적화
+   * AI 특성 기반 에이전트 선택 최적화 (성능 데이터 기반 개선)
    */
   optimizeAgentSelection(strategy, aiCapabilities, userMessage) {
     const mode = strategy.collaborationMode;
     const category = strategy.category;
     const complexity = strategy.complexity;
+    const taskType = category || 'general';
     
     // 기본 추천 에이전트
     let agents = strategy.recommendedAgents || ['ChatGPT'];
+    
+    // 성능 데이터 기반 최적화
+    const performanceData = this.getPerformanceDataForTask(taskType);
+    if (performanceData && performanceData.length > 0) {
+      // 성능 점수 계산 (성공률 * 사용자 만족도 / 평균 응답 시간)
+      const scoredAgents = performanceData.map(perf => {
+        const score = (perf.success_rate || 0) * (perf.user_satisfaction || 0.5) / Math.max(perf.avg_response_time || 1000, 100);
+        return {
+          name: perf.ai_provider,
+          score: score,
+          successRate: perf.success_rate || 0,
+          avgTime: perf.avg_response_time || 0,
+          uses: perf.total_uses || 0
+        };
+      }).sort((a, b) => b.score - a.score);
+      
+      // 성능이 좋은 AI 우선 선택
+      if (scoredAgents.length > 0 && mode === 'single') {
+        const bestAgent = scoredAgents[0].name;
+        if (this.providers[bestAgent]?.isAvailable) {
+          agents = [bestAgent];
+          logger.debug('Performance-based agent selection', {
+            selected: bestAgent,
+            score: scoredAgents[0].score,
+            taskType
+          });
+        }
+      } else if (scoredAgents.length > 0) {
+        // 여러 AI가 필요한 경우 성능 순으로 정렬
+        const performanceOrder = scoredAgents
+          .filter(a => this.providers[a.name]?.isAvailable)
+          .map(a => a.name);
+        
+        // 기존 추천과 성능 데이터를 결합
+        agents = [...new Set([...performanceOrder, ...agents])]
+          .filter(agent => this.providers[agent]?.isAvailable)
+          .slice(0, mode === 'debate' || mode === 'voting' ? 4 : 2);
+      }
+    }
     
     // 카테고리 기반 최적화
     if (category === 'technical' || category === 'conversation') {
@@ -316,6 +356,18 @@ ${learningContext}
       // 이미 추천된 에이전트 사용
     }
     
+    // 성능 데이터 기반 필터링 (성능이 너무 낮은 AI 제외)
+    agents = agents.filter(agent => {
+      if (!this.providers[agent]?.isAvailable) return false;
+      
+      // 성능 데이터가 있으면 성공률이 0.3 이상인 AI만 사용
+      const perf = performanceData?.find(p => p.ai_provider === agent);
+      if (perf && perf.total_uses > 5) {
+        return (perf.success_rate || 0) >= 0.3;
+      }
+      return true; // 성능 데이터가 없으면 사용 가능
+    });
+    
     // 사용 가능한 AI만 필터링
     agents = agents.filter(agent => 
       this.providers[agent]?.isAvailable
@@ -327,6 +379,69 @@ ${learningContext}
     }
     
     return agents.slice(0, 4); // 최대 4개
+  }
+
+  /**
+   * 특정 작업 유형에 대한 성능 데이터 가져오기
+   */
+  getPerformanceDataForTask(taskType) {
+    try {
+      const stmt = this.performanceMonitor.db.prepare(`
+        SELECT * FROM ai_performance 
+        WHERE task_type = ? 
+        ORDER BY (success_rate * COALESCE(user_satisfaction, 0.5) / NULLIF(avg_response_time, 0)) DESC
+        LIMIT 10
+      `);
+      return stmt.all(taskType);
+    } catch (error) {
+      logger.error('Failed to get performance data', error);
+      return [];
+    }
+  }
+
+  /**
+   * 사용자 피드백 기반 학습 업데이트
+   */
+  updateLearningFromFeedback(userId, agentName, taskType, feedback) {
+    try {
+      // 피드백을 만족도 점수로 변환 (like: 1.0, dislike: 0.0)
+      const satisfaction = feedback === 'like' ? 1.0 : feedback === 'dislike' ? 0.0 : 0.5;
+      
+      // 기존 성능 데이터 업데이트
+      const existing = this.performanceMonitor.db.prepare(`
+        SELECT * FROM ai_performance 
+        WHERE ai_provider = ? AND task_type = ?
+      `).get(agentName, taskType);
+
+      if (existing) {
+        const totalUses = existing.total_uses || 1;
+        const currentSatisfaction = existing.user_satisfaction || 0.5;
+        // 가중 평균으로 만족도 업데이트
+        const newSatisfaction = (currentSatisfaction * (totalUses - 1) + satisfaction) / totalUses;
+        
+        this.performanceMonitor.db.prepare(`
+          UPDATE ai_performance 
+          SET user_satisfaction = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE ai_provider = ? AND task_type = ?
+        `).run(newSatisfaction, agentName, taskType);
+        
+        logger.debug('Learning updated from feedback', {
+          agent: agentName,
+          taskType,
+          satisfaction: newSatisfaction,
+          feedback
+        });
+      } else {
+        // 새 레코드 생성
+        this.performanceMonitor.db.prepare(`
+          INSERT INTO ai_performance 
+          (ai_provider, task_type, success_rate, avg_response_time, total_uses, user_satisfaction)
+          VALUES (?, ?, 1.0, 0.0, 1, ?)
+        `).run(agentName, taskType, satisfaction);
+      }
+    } catch (error) {
+      logger.error('Failed to update learning from feedback', error);
+    }
   }
 
   parseStrategy(content) {

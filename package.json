@@ -3,6 +3,13 @@
   "version": "1.0.0",
   "description": "Multi-AI collaborative system with brain-like architecture",
   "main": "src/index.js",
+  "module": "src/index.module.js",
+  "exports": {
+    ".": {
+      "import": "./src/index.module.js",
+      "require": "./src/index.js"
+    }
+  },
   "type": "module",
   "scripts": {
     "dev": "nodemon src/index.js",
