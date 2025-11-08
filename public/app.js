@@ -4413,3 +4413,32 @@ function handleStreamingComplete(fullContent) {
     }
   }
 }
+
+// 웹 브라우저 제어 함수
+window.sendBrowserCommand = async function(action, url = null) {
+  try {
+    // AI에게 브라우저 제어 명령 전달
+    const message = action === 'navigate' && url 
+      ? `웹 브라우저를 사용하여 ${url}로 이동해주세요.`
+      : action === 'screenshot'
+      ? '현재 웹 페이지의 스크린샷을 찍어주세요.'
+      : action === 'getContent'
+      ? '현재 웹 페이지의 내용을 가져와주세요.'
+      : action === 'close'
+      ? '웹 브라우저를 닫아주세요.'
+      : `웹 브라우저 제어: ${action}`;
+    
+    // 채팅에 메시지 추가 및 전송
+    if (messageInput) {
+      messageInput.value = message;
+      const event = new Event('submit', { bubbles: true, cancelable: true });
+      chatForm.dispatchEvent(event);
+    }
+    
+    // 모달 닫기
+    closeModal('browserControlModal');
+  } catch (error) {
+    console.error('Browser control error:', error);
+    alert('브라우저 제어 중 오류가 발생했습니다: ' + error.message);
+  }
+};
