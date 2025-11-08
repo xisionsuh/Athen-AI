@@ -3439,6 +3439,12 @@ function updateThemeIcon(theme) {
 }
 
 // 성능 대시보드 표시
+// 성능 차트 인스턴스 저장
+let performanceCharts = {
+  historyChart: null,
+  comparisonChart: null
+};
+
 async function showPerformanceDashboard() {
   try {
     // 전체 요약 가져오기
@@ -3524,51 +3530,60 @@ async function showPerformanceDashboard() {
     }
     
     // 사용량 및 비용 통계
-    if (usageData.success && usageData.totalCalls > 0) {
+    if (usageData.success && usageData.stats && usageData.stats.length > 0) {
+      const totalCalls = usageData.stats.reduce((sum, s) => sum + (s.totalCalls || 0), 0);
+      const totalTokens = usageData.stats.reduce((sum, s) => sum + (s.totalTokens || 0), 0);
+      const totalInputTokens = usageData.stats.reduce((sum, s) => sum + (s.totalInputTokens || 0), 0);
+      const totalOutputTokens = usageData.stats.reduce((sum, s) => sum + (s.totalOutputTokens || 0), 0);
+      const totalCost = usageData.stats.reduce((sum, s) => sum + (s.totalCost || 0), 0);
+      const avgResponseTime = usageData.stats.reduce((sum, s) => sum + (s.avgResponseTime || 0), 0) / usageData.stats.length;
+      
+      if (totalCalls > 0) {
       html += '<div class="usage-stats">';
       html += '<h4>💰 API 사용량 및 비용</h4>';
       html += '<div class="usage-grid">';
       html += `
         <div class="usage-card">
           <div class="usage-label">총 API 호출</div>
-          <div class="usage-value">${usageData.totalCalls.toLocaleString()}</div>
+          <div class="usage-value">${totalCalls.toLocaleString()}</div>
         </div>
         <div class="usage-card">
           <div class="usage-label">총 토큰 사용</div>
-          <div class="usage-value">${usageData.totalTokens.toLocaleString()}</div>
-          <div class="usage-detail">입력: ${usageData.totalInputTokens.toLocaleString()} / 출력: ${usageData.totalOutputTokens.toLocaleString()}</div>
+          <div class="usage-value">${totalTokens.toLocaleString()}</div>
+          <div class="usage-detail">입력: ${totalInputTokens.toLocaleString()} / 출력: ${totalOutputTokens.toLocaleString()}</div>
         </div>
         <div class="usage-card">
           <div class="usage-label">예상 총 비용</div>
-          <div class="usage-value">$${usageData.totalCost.toFixed(4)}</div>
+          <div class="usage-value">$${totalCost.toFixed(4)}</div>
         </div>
         <div class="usage-card">
           <div class="usage-label">평균 응답 시간</div>
-          <div class="usage-value">${usageData.avgResponseTime.toFixed(0)}ms</div>
+          <div class="usage-value">${avgResponseTime.toFixed(0)}ms</div>
         </div>
       `;
       html += '</div></div>';
       
       // 비용 통계 상세
-      if (costData.success && costData.costStats && costData.costStats.length > 0) {
+      if (usageData.stats && usageData.stats.length > 0) {
         html += '<div class="cost-breakdown">';
         html += '<h5>모델별 비용 상세</h5>';
         html += '<div class="cost-table">';
         html += '<table>';
         html += '<thead><tr><th>AI</th><th>모델</th><th>비용</th><th>토큰</th><th>호출 수</th></tr></thead>';
         html += '<tbody>';
-        costData.costStats.forEach(stat => {
+        usageData.stats.forEach(stat => {
           html += `
             <tr>
               <td>${getAgentIcon(stat.provider)} ${stat.provider}</td>
-              <td>${stat.model}</td>
-              <td>$${stat.totalCost.toFixed(4)}</td>
-              <td>${stat.totalTokens.toLocaleString()}</td>
-              <td>${stat.callCount}</td>
+              <td>${stat.model || 'N/A'}</td>
+              <td>$${(stat.totalCost || 0).toFixed(4)}</td>
+              <td>${(stat.totalTokens || 0).toLocaleString()}</td>
+              <td>${stat.totalCalls || 0}</td>
             </tr>
           `;
         });
         html += '</tbody></table></div></div>';
+      }
       }
     }
     
@@ -3631,13 +3646,229 @@ async function showPerformanceDashboard() {
       if (summaryData.success && summaryData.summary && summaryData.summary.length > 0) {
         renderPerformanceComparisonChart(summaryData.summary);
       }
+      
+      // AI별 성능 비교 상세 차트
+      if (comparisonData.success && comparisonData.comparison && comparisonData.comparison.length > 0) {
+        renderProviderComparisonChart(comparisonData.comparison);
+      }
     } else {
       console.warn('Chart.js가 로드되지 않았습니다. 그래프를 표시할 수 없습니다.');
     }
   } catch (error) {
     console.error('Failed to load performance dashboard:', error);
-    alert('성능 대시보드를 불러오는 중 오류가 발생했습니다.');
+    const content = document.getElementById('performanceContent');
+    if (content) {
+      content.innerHTML = '<div class="error-message">성능 대시보드를 불러오는 중 오류가 발생했습니다: ' + error.message + '</div>';
+    }
   }
+}
+
+// 성능 히스토리 차트 렌더링
+function renderPerformanceHistoryChart(historyData) {
+  const ctx = document.getElementById('performanceHistoryChart');
+  if (!ctx) return;
+  
+  // 기존 차트가 있으면 제거
+  if (performanceCharts.historyChart) {
+    performanceCharts.historyChart.destroy();
+  }
+  
+  // Provider별로 데이터 그룹화
+  const providers = [...new Set(historyData.map(h => h.provider))];
+  const datasets = providers.map((provider, index) => {
+    const providerData = historyData.filter(h => h.provider === provider);
+    const colors = ['#667eea', '#f093fb', '#4facfe', '#43e97b'];
+    
+    return {
+      label: provider,
+      data: providerData.map(h => ({
+        x: new Date(h.timestamp),
+        y: h.avgResponseTime
+      })),
+      borderColor: colors[index % colors.length],
+      backgroundColor: colors[index % colors.length] + '20',
+      tension: 0.4,
+      fill: false
+    };
+  });
+  
+  performanceCharts.historyChart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          type: 'time',
+          time: {
+            unit: 'hour'
+          },
+          title: {
+            display: true,
+            text: '시간'
+          }
+        },
+        y: {
+          title: {
+            display: true,
+            text: '응답 시간 (ms)'
+          }
+        }
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        },
+        title: {
+          display: true,
+          text: 'AI별 응답 시간 추이'
+        }
+      }
+    }
+  });
+}
+
+// AI별 성능 비교 차트 렌더링
+function renderPerformanceComparisonChart(summaryData) {
+  const ctx = document.getElementById('performanceComparisonChart');
+  if (!ctx) return;
+  
+  // 기존 차트가 있으면 제거
+  if (performanceCharts.comparisonChart) {
+    performanceCharts.comparisonChart.destroy();
+  }
+  
+  const labels = summaryData.map(s => s.provider);
+  const successRates = summaryData.map(s => (s.avgSuccessRate || 0) * 100);
+  const responseTimes = summaryData.map(s => s.avgResponseTime || 0);
+  
+  performanceCharts.comparisonChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '성공률 (%)',
+          data: successRates,
+          backgroundColor: '#667eea',
+          yAxisID: 'y'
+        },
+        {
+          label: '응답 시간 (ms)',
+          data: responseTimes,
+          backgroundColor: '#f093fb',
+          yAxisID: 'y1'
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          type: 'linear',
+          display: true,
+          position: 'left',
+          title: {
+            display: true,
+            text: '성공률 (%)'
+          },
+          max: 100
+        },
+        y1: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          title: {
+            display: true,
+            text: '응답 시간 (ms)'
+          },
+          grid: {
+            drawOnChartArea: false
+          }
+        }
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        },
+        title: {
+          display: true,
+          text: 'AI별 성능 비교'
+        }
+      }
+    }
+  });
+}
+
+// Provider 비교 차트 렌더링 (상세)
+function renderProviderComparisonChart(comparisonData) {
+  // 비교 차트를 위한 추가 캔버스 생성
+  const container = document.querySelector('.performance-comparison .chart-container');
+  if (!container) return;
+  
+  const existingCanvas = container.querySelector('#providerComparisonChart');
+  if (existingCanvas) {
+    existingCanvas.remove();
+  }
+  
+  const canvas = document.createElement('canvas');
+  canvas.id = 'providerComparisonChart';
+  container.appendChild(canvas);
+  
+  const ctx = canvas.getContext('2d');
+  
+  const providers = [...new Set(comparisonData.map(c => c.provider))];
+  const labels = providers;
+  
+  const datasets = [
+    {
+      label: '평균 성공률 (%)',
+      data: providers.map(p => {
+        const providerData = comparisonData.filter(c => c.provider === p);
+        const avg = providerData.reduce((sum, d) => sum + (d.avgSuccessRate || 0), 0) / providerData.length;
+        return avg * 100;
+      }),
+      backgroundColor: '#667eea'
+    },
+    {
+      label: '평균 만족도 (%)',
+      data: providers.map(p => {
+        const providerData = comparisonData.filter(c => c.provider === p);
+        const avg = providerData.reduce((sum, d) => sum + (d.avgSatisfaction || 0.5), 0) / providerData.length;
+        return avg * 100;
+      }),
+      backgroundColor: '#43e97b'
+    }
+  ];
+  
+  new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 100,
+          title: {
+            display: true,
+            text: '비율 (%)'
+          }
+        }
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        }
+      }
+    }
+  });
 }
 
 // 성능 히스토리 그래프 렌더링
