@@ -6,14 +6,30 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// 데이터베이스 인스턴스 캐시
+const dbCache = new Map();
+
+export function getDatabase(dbPath = './data/athena.db') {
+  const resolvedPath = path.resolve(dbPath);
+  
+  if (dbCache.has(resolvedPath)) {
+    return dbCache.get(resolvedPath);
+  }
+
+  const db = new Database(resolvedPath);
+  db.pragma('journal_mode = WAL');
+  dbCache.set(resolvedPath, db);
+  
+  return db;
+}
+
 export function initializeDatabase(dbPath = './data/athena.db') {
   const dataDir = path.dirname(dbPath);
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
+  const db = getDatabase(dbPath);
 
   // 사용자 테이블
   db.exec(`
@@ -192,6 +208,58 @@ export function initializeDatabase(dbPath = './data/athena.db') {
     )
   `);
 
+  // 검색 결과 요약 캐시
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS search_summary_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      query TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL
+    )
+  `);
+
+  // 프로젝트 테이블
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
+
+  // 프로젝트 파일 테이블
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS project_files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_type TEXT NOT NULL,
+      file_size INTEGER DEFAULT 0,
+      mime_type TEXT,
+      content_text TEXT, -- 텍스트 파일의 경우 내용 저장
+      metadata TEXT, -- JSON 형태로 추가 정보 저장
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    )
+  `);
+
+  // 프로젝트 세션 연결 테이블 (세션이 특정 프로젝트에 속함)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS project_sessions (
+      session_id TEXT NOT NULL,
+      project_id TEXT NOT NULL,
+      PRIMARY KEY (session_id, project_id),
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    )
+  `);
+
   // 인덱스 생성
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_short_term_session ON short_term_memory(session_id);
@@ -208,4 +276,11 @@ export function initializeDatabase(dbPath = './data/athena.db') {
     CREATE INDEX IF NOT EXISTS idx_search_summary_query ON search_summary_cache(query);
     CREATE INDEX IF NOT EXISTS idx_debate_feedback_session ON debate_feedback(session_id);
     CREATE INDEX IF NOT EXISTS idx_voting_feedback_session ON voting_feedback(session_id);
+    CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
+    CREATE INDEX IF NOT EXISTS idx_project_files_project ON project_files(project_id);
+    CREATE INDEX IF NOT EXISTS idx_project_sessions_project ON project_sessions(project_id);
+    CREATE INDEX IF NOT EXISTS idx_project_sessions_session ON project_sessions(session_id);
   `);
+
+  return db;
+}

@@ -51,19 +51,32 @@ export class PluginLoader {
       const PluginClass = pluginModule.default || pluginModule.Plugin;
 
       if (!PluginClass) {
-        throw new Error('Plugin class not found');
+        logger.warn('Plugin class not found, skipping', { path: pluginPath });
+        return null;
       }
 
       const plugin = new PluginClass();
-      await plugin.initialize({ pluginsDir: this.pluginsDir });
+      
+      // initialize 메서드가 있으면 호출, 없으면 onLoad 호출
+      if (typeof plugin.initialize === 'function') {
+        await plugin.initialize({ pluginsDir: this.pluginsDir });
+      } else if (typeof plugin.onLoad === 'function') {
+        await plugin.onLoad();
+      }
+
+      // enabled 속성이 없으면 기본값 true 설정
+      if (plugin.enabled === undefined) {
+        plugin.enabled = true;
+      }
 
       this.plugins.set(plugin.name, plugin);
-      logger.info('Plugin loaded', { name: plugin.name, version: plugin.version });
+      logger.info('Plugin loaded', { name: plugin.name, version: plugin.version || '1.0.0' });
 
       return plugin;
     } catch (error) {
       logger.error('Failed to load plugin', error, { path: pluginPath });
-      throw error;
+      // 에러가 발생해도 서버 시작은 계속되도록
+      return null;
     }
   }
 
@@ -76,7 +89,14 @@ export class PluginLoader {
       throw new Error(`Plugin not found: ${pluginName}`);
     }
 
-    await plugin.activate();
+    if (typeof plugin.activate === 'function') {
+      await plugin.activate();
+    } else if (typeof plugin.enable === 'function') {
+      plugin.enable();
+    } else {
+      plugin.enabled = true;
+    }
+    
     logger.info('Plugin activated', { name: pluginName });
   }
 
@@ -89,7 +109,14 @@ export class PluginLoader {
       throw new Error(`Plugin not found: ${pluginName}`);
     }
 
-    await plugin.deactivate();
+    if (typeof plugin.deactivate === 'function') {
+      await plugin.deactivate();
+    } else if (typeof plugin.disable === 'function') {
+      plugin.disable();
+    } else {
+      plugin.enabled = false;
+    }
+    
     logger.info('Plugin deactivated', { name: pluginName });
   }
 
@@ -112,15 +139,24 @@ export class PluginLoader {
     let result = args[0];
 
     for (const plugin of this.plugins.values()) {
-      if (plugin.enabled && plugin.hooks[hookName]) {
-        try {
-          result = await plugin.executeHook(hookName, result, ...args.slice(1));
-        } catch (error) {
-          logger.error('Hook execution failed', error, {
-            plugin: plugin.name,
-            hook: hookName
-          });
+      if (!plugin.enabled) {
+        continue;
+      }
+
+      try {
+        // 플러그인이 직접 훅 메서드를 가지고 있는 경우 (beforeMessage, afterMessage 등)
+        if (typeof plugin[hookName] === 'function') {
+          result = await plugin[hookName](result, ...args.slice(1));
         }
+        // 또는 hooks 객체를 통해 등록된 경우
+        else if (plugin.hooks && plugin.hooks[hookName]) {
+          result = await plugin.executeHook(hookName, result, ...args.slice(1));
+        }
+      } catch (error) {
+        logger.error('Hook execution failed', error, {
+          plugin: plugin.name,
+          hook: hookName
+        });
       }
     }
 

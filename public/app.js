@@ -21,6 +21,11 @@ const learningBtn = document.getElementById('learningBtn');
 const learningModal = document.getElementById('learningModal');
 const pluginsBtn = document.getElementById('pluginsBtn');
 const pluginsModal = document.getElementById('pluginsModal');
+const projectBtn = document.getElementById('projectBtn');
+const projectModal = document.getElementById('projectModal');
+const projectDetailModal = document.getElementById('projectDetailModal');
+const sidebarProjectsList = document.getElementById('sidebarProjectsList');
+const newProjectBtn = document.getElementById('newProjectBtn');
 const voiceInputBtn = document.getElementById('voiceInputBtn');
 const voiceIcon = document.getElementById('voiceIcon');
 const fileUploadBtn = document.getElementById('fileUploadBtn');
@@ -100,6 +105,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await checkAIStatus();
   await loadSessions();
+  await loadSidebarProjects();
   
   // 기존 세션이 있으면 가장 최근 세션을 로드, 없으면 새 세션 생성
   const sessionsResponse = await fetch(`${API_BASE}/sessions/${userId}`);
@@ -118,6 +124,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   chatForm.addEventListener('submit', handleSendMessage);
   newChatBtn.addEventListener('click', createNewSession);
   memoryBtn.addEventListener('click', () => openModal('memoryModal'));
+  if (projectBtn) {
+    projectBtn.addEventListener('click', () => {
+      openModal('projectModal');
+      loadProjects();
+    });
+  }
+  
+  // 사이드바 프로젝트 관리
+  if (newProjectBtn) {
+    newProjectBtn.addEventListener('click', () => {
+      createProjectFromSidebar();
+    });
+  }
   if (performanceBtn) {
     performanceBtn.addEventListener('click', () => showPerformanceDashboard());
   }
@@ -242,14 +261,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Shift+Enter로 줄바꿈, Enter로 전송 (한글 조합 중에는 무시)
-  messageInput.addEventListener('keydown', (e) => {
+  messageInput.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       // 한글 조합 중이면 무시
       if (isComposing) {
         return;
       }
+      // 이미 제출 중이면 무시
+      if (isSubmitting) {
       e.preventDefault();
-      chatForm.dispatchEvent(new Event('submit'));
+        return;
+      }
+      e.preventDefault();
+      // 직접 handleSendMessage 호출 (이벤트 객체 생성)
+      const submitEvent = new Event('submit', { bubbles: true, cancelable: true });
+      await handleSendMessage(submitEvent);
     }
   });
 
@@ -417,7 +443,7 @@ async function handleSendMessage(e) {
 
   // UI 업데이트
   if (message) {
-    addMessage('user', message);
+  addMessage('user', message);
     window.lastUserMessage = message; // 마지막 사용자 메시지 저장
   }
   
@@ -560,6 +586,12 @@ async function handleStreamingMessageWithFiles(message, files) {
               contentDiv.innerHTML = formatMessage(fullContent, metadata?.searchResults || null);
             }
             handleStreamingComplete(fullContent);
+            
+            // 장기 기억 추출 처리
+            if (fullContent && window.lastUserMessage) {
+              await processMemoryExtraction(window.lastUserMessage, fullContent, assistantMessageDiv);
+            }
+            
             await loadSessions();
             return;
           }
@@ -656,6 +688,12 @@ async function handleStreamingMessage(message) {
             if (metadata) {
               renderMetadata(metadataDiv, metadata);
             }
+            
+            // 장기 기억 추출 처리
+            if (fullContent && window.lastUserMessage) {
+              await processMemoryExtraction(window.lastUserMessage, fullContent, assistantMessageDiv);
+            }
+            
             await loadSessions();
             return;
           }
@@ -739,6 +777,12 @@ async function handleStreamingMessage(message) {
               }
               // 음성 출력
               handleStreamingComplete(fullContent);
+              
+              // 장기 기억 추출 처리
+              if (fullContent && window.lastUserMessage) {
+                await processMemoryExtraction(window.lastUserMessage, fullContent, assistantMessageDiv);
+              }
+              
               await loadSessions();
               return;
             } else if (parsed.type === 'error') {
@@ -2073,6 +2117,11 @@ function hideProgress() {
 // 새 세션 생성
 async function createNewSession() {
   try {
+    // 기존 메시지 영역 완전히 초기화
+    if (chatMessages) {
+      chatMessages.innerHTML = '';
+    }
+    
     const response = await fetch(`${API_BASE}/session/new`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2082,6 +2131,8 @@ async function createNewSession() {
     const data = await response.json();
     if (data.success) {
       currentSessionId = data.sessionId;
+      
+      // 채팅 메시지 영역을 완전히 초기화하고 welcome screen 표시
       chatMessages.innerHTML = `
         <div class="welcome-screen">
           <div class="welcome-icon">🧠</div>
@@ -2089,13 +2140,37 @@ async function createNewSession() {
           <p>무엇을 도와드릴까요?</p>
         </div>
       `;
-      document.getElementById('chatTitle').textContent = '새 대화';
       
-      // 세션 목록 새로고침하여 새 대화가 바로 나타나도록
+      // 제목 및 프로젝트 정보 업데이트
+      const chatTitle = document.getElementById('chatTitle');
+      const projectInfo = document.getElementById('projectInfo');
+      if (chatTitle) {
+        chatTitle.textContent = '새 대화';
+      }
+      if (projectInfo) {
+        projectInfo.style.display = 'none';
+      }
+      
+      // 입력창 초기화 및 포커스
+      if (messageInput) {
+        messageInput.value = '';
+        messageInput.style.height = 'auto';
+        messageInput.focus();
+      }
+      
+      // 파일 업로드 초기화
+      uploadedFiles = [];
+      const filePreviewsContainer = document.querySelector('.file-previews-container');
+      if (filePreviewsContainer) {
+        filePreviewsContainer.remove();
+      }
+      
+      // 세션 목록 새로고침 (이벤트 리스너는 추가하되 자동 로드는 하지 않음)
       await loadSessions();
     }
   } catch (error) {
     console.error('Failed to create session:', error);
+    alert('새 대화를 생성하는 중 오류가 발생했습니다: ' + error.message);
   }
 }
 
@@ -2109,11 +2184,18 @@ async function loadSessions() {
       sessionsList.innerHTML = data.sessions.map(session => {
         // 세션 ID를 안전하게 이스케이프
         const sessionId = session.id.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        const hasProject = session.project !== null && session.project !== undefined;
+        const projectName = hasProject ? escapeHtml(session.project.name) : '';
+        const projectClass = hasProject ? 'session-with-project' : '';
         return `
-        <div class="session-item ${session.id === currentSessionId ? 'active' : ''}" data-session-id="${session.id}">
+        <div class="session-item ${session.id === currentSessionId ? 'active' : ''} ${projectClass}" data-session-id="${session.id}">
           <div class="session-content">
-          <h4>${session.title || '제목 없음'}</h4>
+            <div class="session-title-row">
+              ${hasProject ? '<span class="project-badge" title="프로젝트: ' + projectName + '">📁</span>' : ''}
+              <h4>${escapeHtml(session.title || '제목 없음')}</h4>
+            </div>
           <p>${new Date(session.updated_at).toLocaleDateString('ko-KR')}</p>
+            ${hasProject ? `<p class="session-project-name">프로젝트: ${projectName}</p>` : ''}
         </div>
           <button class="session-delete-btn" data-session-id="${session.id}" title="삭제">
             🗑️
@@ -2192,10 +2274,12 @@ window.loadSession = async function(sessionId) {
         return;
       }
       
+      // 채팅 메시지 영역 완전히 초기화
       chatMessages.innerHTML = '';
 
       if (data.messages && data.messages.length > 0) {
         console.log('Loading messages:', data.messages.length);
+        // 메시지를 순차적으로 추가
         data.messages.forEach((msg, index) => {
           console.log(`Message ${index}:`, msg);
           // metadata가 이미 객체로 파싱되어 있거나 문자열일 수 있음
@@ -2214,7 +2298,10 @@ window.loadSession = async function(sessionId) {
           }
           addMessage(msg.message_type, msg.content || '', metadata);
         });
+        // 모든 메시지 추가 후 한 번만 스크롤
+        chatMessages.scrollTop = chatMessages.scrollHeight;
       } else {
+        // 메시지가 없는 경우 welcome screen 표시
         chatMessages.innerHTML = `
           <div class="welcome-screen">
             <div class="welcome-icon">🧠</div>
@@ -2224,7 +2311,50 @@ window.loadSession = async function(sessionId) {
         `;
       }
 
-      document.getElementById('chatTitle').textContent = data.session.title || '대화';
+      // 채팅 제목 및 프로젝트 정보 업데이트
+      const chatTitle = document.getElementById('chatTitle');
+      const projectInfo = document.getElementById('projectInfo');
+      
+      // 프로젝트 정보 가져오기
+      try {
+        const projectResponse = await fetch(`${API_BASE}/session/${sessionId}/project`);
+        const projectData = await projectResponse.json();
+        
+        if (projectData.success && projectData.project) {
+          const project = projectData.project;
+          chatTitle.textContent = data.session.title || '대화';
+          
+          // 프로젝트 정보 표시
+          if (!projectInfo) {
+            // 프로젝트 정보 요소가 없으면 생성
+            const projectInfoDiv = document.createElement('div');
+            projectInfoDiv.id = 'projectInfo';
+            projectInfoDiv.className = 'project-info-header';
+            chatTitle.parentNode.insertBefore(projectInfoDiv, chatTitle.nextSibling);
+          }
+          
+          const projectInfoElement = document.getElementById('projectInfo');
+          if (projectInfoElement) {
+            projectInfoElement.innerHTML = `
+              <span class="project-badge-header">📁 ${escapeHtml(project.name)}</span>
+              <button class="btn-unlink-project" onclick="unlinkProjectFromSession('${sessionId}')" title="프로젝트 연결 해제">✕</button>
+            `;
+            projectInfoElement.style.display = 'flex';
+          }
+        } else {
+          // 프로젝트가 연결되지 않은 경우
+          chatTitle.textContent = data.session.title || '대화';
+          if (projectInfo) {
+            projectInfo.style.display = 'none';
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load project info:', error);
+        chatTitle.textContent = data.session.title || '대화';
+        if (projectInfo) {
+          projectInfo.style.display = 'none';
+        }
+      }
 
       // 세션 목록 업데이트
       await loadSessions();
@@ -2417,8 +2547,183 @@ function openModal(modalId) {
     modal.style.display = 'flex';
     // 모달 열릴 때 body 스크롤 방지
     document.body.style.overflow = 'hidden';
+    
+    // 장기 기억 모달인 경우 설정 로드 및 이벤트 리스너 설정
+    if (modalId === 'memoryModal') {
+      loadMemorySettings();
+      setupMemoryModalListeners();
+      loadMemories();
+    }
+    
+    // 프로젝트 모달인 경우 프로젝트 목록 로드
+    if (modalId === 'projectModal') {
+      loadProjects();
+    }
   }
 }
+
+// 장기 기억 설정 로드
+function loadMemorySettings() {
+  const toggle = document.getElementById('memoryAutoExtractToggle');
+  if (toggle) {
+    const autoExtractEnabled = localStorage.getItem('memoryAutoExtract') !== 'false';
+    toggle.checked = autoExtractEnabled;
+  }
+}
+
+// 장기 기억 모달 이벤트 리스너 설정
+function setupMemoryModalListeners() {
+  const toggle = document.getElementById('memoryAutoExtractToggle');
+  if (toggle) {
+    toggle.onchange = (e) => {
+      localStorage.setItem('memoryAutoExtract', e.target.checked);
+    };
+  }
+
+  // 새 기억 추가 버튼
+  const addMemoryBtn = document.getElementById('addMemoryBtn');
+  if (addMemoryBtn) {
+    addMemoryBtn.onclick = () => {
+      const title = prompt('제목을 입력하세요:');
+      if (!title) return;
+      
+      const content = prompt('내용을 입력하세요:');
+      if (!content) return;
+      
+      const category = prompt('카테고리 (preference/project/fact):', 'preference');
+      if (!category) return;
+      
+      saveMemoryManually(title, content, category);
+    };
+  }
+
+  // 검색 입력
+  const memorySearchInput = document.getElementById('memorySearchInput');
+  if (memorySearchInput) {
+    memorySearchInput.oninput = (e) => {
+      const query = e.target.value.trim();
+      if (query) {
+        searchMemories(query);
+      } else {
+        loadMemories();
+      }
+    };
+  }
+}
+
+// 장기 기억 로드
+async function loadMemories() {
+  try {
+    const memoriesList = document.getElementById('memoriesList');
+    if (!memoriesList) return;
+
+    const response = await fetch(`${API_BASE}/memory/long-term/${userId}`);
+    const data = await response.json();
+
+    if (data.success && data.memories && data.memories.length > 0) {
+      memoriesList.innerHTML = data.memories.map(memory => `
+        <div class="memory-item">
+          <h4>${escapeHtml(memory.title)}</h4>
+          <p>${escapeHtml(memory.content)}</p>
+          <div class="memory-meta">
+            <span class="memory-category">${escapeHtml(memory.category)}</span>
+            <span class="memory-importance">중요도: ${memory.importance}/10</span>
+            <button class="memory-delete-btn" onclick="deleteMemory(${memory.id})">삭제</button>
+          </div>
+        </div>
+      `).join('');
+    } else {
+      memoriesList.innerHTML = '<div class="no-memories">저장된 장기 기억이 없습니다.</div>';
+    }
+  } catch (error) {
+    console.error('Failed to load memories:', error);
+    const memoriesList = document.getElementById('memoriesList');
+    if (memoriesList) {
+      memoriesList.innerHTML = '<div class="error-message">장기 기억을 불러오는 중 오류가 발생했습니다.</div>';
+    }
+  }
+}
+
+// 장기 기억 검색
+async function searchMemories(query) {
+  try {
+    const memoriesList = document.getElementById('memoriesList');
+    if (!memoriesList) return;
+
+    const response = await fetch(`${API_BASE}/memory/search/${userId}?q=${encodeURIComponent(query)}`);
+    const data = await response.json();
+
+    if (data.success && data.results && data.results.length > 0) {
+      memoriesList.innerHTML = data.results.map(memory => `
+        <div class="memory-item">
+          <h4>${escapeHtml(memory.title)}</h4>
+          <p>${escapeHtml(memory.content)}</p>
+          <div class="memory-meta">
+            <span class="memory-category">${escapeHtml(memory.category)}</span>
+            <span class="memory-importance">중요도: ${memory.importance}/10</span>
+            <button class="memory-delete-btn" onclick="deleteMemory(${memory.id})">삭제</button>
+          </div>
+        </div>
+      `).join('');
+    } else {
+      memoriesList.innerHTML = '<div class="no-memories">검색 결과가 없습니다.</div>';
+    }
+  } catch (error) {
+    console.error('Failed to search memories:', error);
+  }
+}
+
+// 수동 저장
+async function saveMemoryManually(title, content, category) {
+  try {
+    const response = await fetch(`${API_BASE}/memory/long-term`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        category,
+        title,
+        content,
+        importance: 5
+      })
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      alert('장기 기억이 저장되었습니다.');
+      loadMemories();
+    } else {
+      alert('저장 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to save memory:', error);
+    alert('저장 중 오류가 발생했습니다: ' + error.message);
+  }
+}
+
+// 장기 기억 삭제
+window.deleteMemory = async function(memoryId) {
+  if (!confirm('이 장기 기억을 삭제하시겠습니까?')) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/memory/long-term/${memoryId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      loadMemories();
+    } else {
+      alert('삭제 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to delete memory:', error);
+    alert('삭제 중 오류가 발생했습니다: ' + error.message);
+  }
+};
 
 function closeModal(modalId) {
   const modal = document.getElementById(modalId);
@@ -3537,6 +3842,10 @@ async function showPerformanceDashboard() {
     const alertsResponse = await fetch(`${API_BASE}/performance/alerts`);
     const alertsData = await alertsResponse.json();
     
+    // AI별 성능 비교 데이터 가져오기
+    const comparisonResponse = await fetch(`${API_BASE}/performance/comparison`);
+    const comparisonData = await comparisonResponse.json().catch(() => ({ success: false, comparison: [] }));
+    
     const content = document.getElementById('performanceContent');
     if (!content) return;
     
@@ -3931,48 +4240,6 @@ function renderProviderComparisonChart(comparisonData) {
         legend: {
           display: true,
           position: 'top'
-        }
-      }
-    }
-  });
-}
-
-          data: avgSuccessRate.map(r => r * 100),
-          borderColor: 'rgb(76, 175, 80)',
-          backgroundColor: 'rgba(76, 175, 80, 0.1)',
-          yAxisID: 'y1',
-          tension: 0.4
-        }
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: {
-        mode: 'index',
-        intersect: false,
-      },
-      scales: {
-        y: {
-          type: 'linear',
-          display: true,
-          position: 'left',
-          title: {
-            display: true,
-            text: '응답 시간 (ms)'
-          }
-        },
-        y1: {
-          type: 'linear',
-          display: true,
-          position: 'right',
-          title: {
-            display: true,
-            text: '성공률 (%)'
-          },
-          grid: {
-            drawOnChartArea: false,
-          },
         }
       }
     }
@@ -4670,6 +4937,144 @@ function handleStreamingComplete(fullContent) {
   }
 }
 
+// 장기 기억 추출 처리
+async function processMemoryExtraction(userMessage, aiResponse, messageDiv) {
+  try {
+    // 자동 추출 설정 확인 (기본값: true)
+    const autoExtractEnabled = localStorage.getItem('memoryAutoExtract') !== 'false';
+    if (!autoExtractEnabled) {
+      return;
+    }
+
+    const response = await fetch(`${API_BASE}/memory/extract`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        userMessage,
+        aiResponse: aiResponse.replace(/<[^>]*>/g, '').trim() // HTML 태그 제거
+      })
+    });
+
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+    if (!data.success || !data.memoryExtraction) {
+      return;
+    }
+
+    const extraction = data.memoryExtraction;
+
+    if (extraction.type === 'saved') {
+      // 명시적 요청: 저장 완료 메시지 표시
+      showMemorySavedNotification(extraction, messageDiv);
+    } else if (extraction.type === 'suggestion') {
+      // 자동 감지: 저장 제안 UI 표시
+      showMemorySuggestion(extraction, messageDiv);
+    }
+  } catch (error) {
+    console.error('Memory extraction error:', error);
+  }
+}
+
+// 저장 완료 알림 표시
+function showMemorySavedNotification(extraction, messageDiv) {
+  const notification = document.createElement('div');
+  notification.className = 'memory-saved-notification';
+  notification.innerHTML = `
+    <div class="notification-content">
+      <span class="notification-icon">💾</span>
+      <span class="notification-text">${extraction.message || `"${extraction.title}"을(를) 장기 기억에 저장했습니다.`}</span>
+    </div>
+  `;
+  
+  const messageContent = messageDiv.querySelector('.message-content');
+  if (messageContent) {
+    messageContent.appendChild(notification);
+    
+    // 5초 후 자동 제거
+    setTimeout(() => {
+      notification.remove();
+    }, 5000);
+  }
+}
+
+// 저장 제안 UI 표시
+function showMemorySuggestion(extraction, messageDiv) {
+  const suggestion = document.createElement('div');
+  suggestion.className = 'memory-suggestion';
+  suggestion.innerHTML = `
+    <div class="suggestion-header">
+      <span class="suggestion-icon">💾</span>
+      <span class="suggestion-title">장기 기억 저장 제안</span>
+      <button class="suggestion-close" onclick="this.closest('.memory-suggestion').remove()">×</button>
+    </div>
+    <div class="suggestion-content">
+      <div class="suggestion-item">
+        <strong>${escapeHtml(extraction.title)}</strong>
+        <p>${escapeHtml(extraction.content)}</p>
+        ${extraction.reason ? `<p class="suggestion-reason">${escapeHtml(extraction.reason)}</p>` : ''}
+      </div>
+    </div>
+    <div class="suggestion-actions">
+      <button class="suggestion-btn save-btn" onclick="saveMemorySuggestion(${JSON.stringify(extraction).replace(/"/g, '&quot;')}, this)">저장</button>
+      <button class="suggestion-btn cancel-btn" onclick="this.closest('.memory-suggestion').remove()">나중에</button>
+    </div>
+  `;
+  
+  const messageContent = messageDiv.querySelector('.message-content');
+  if (messageContent) {
+    messageContent.appendChild(suggestion);
+  }
+}
+
+// 저장 제안 수락
+window.saveMemorySuggestion = async function(extraction, button) {
+  try {
+    button.disabled = true;
+    button.textContent = '저장 중...';
+
+    const response = await fetch(`${API_BASE}/memory/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        category: extraction.category,
+        title: extraction.title,
+        content: extraction.content,
+        tags: extraction.tags || [],
+        importance: extraction.importance || 5
+      })
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      const suggestion = button.closest('.memory-suggestion');
+      suggestion.innerHTML = `
+        <div class="suggestion-saved">
+          <span class="saved-icon">✓</span>
+          <span>${data.message || `"${extraction.title}"을(를) 저장했습니다.`}</span>
+        </div>
+      `;
+      
+      setTimeout(() => {
+        suggestion.remove();
+      }, 3000);
+    } else {
+      alert('저장 중 오류가 발생했습니다: ' + (data.error || '알 수 없는 오류'));
+      button.disabled = false;
+      button.textContent = '저장';
+    }
+  } catch (error) {
+    console.error('Save memory suggestion error:', error);
+    alert('저장 중 오류가 발생했습니다: ' + error.message);
+    button.disabled = false;
+    button.textContent = '저장';
+  }
+};
+
 // 웹 브라우저 제어 함수
 window.sendBrowserCommand = async function(action, url = null) {
   try {
@@ -5054,6 +5459,519 @@ async function togglePlugin(pluginName, activate) {
 
 // 전역 함수로 등록
 window.togglePlugin = togglePlugin;
+
+// ==================== 프로젝트 관리 UI ====================
+
+// 사이드바 프로젝트 목록 로드
+async function loadSidebarProjects() {
+  try {
+    if (!sidebarProjectsList || !userId) return;
+
+    const response = await fetch(`${API_BASE}/projects/${userId}`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+
+    if (data.success && data.projects && data.projects.length > 0) {
+      sidebarProjectsList.innerHTML = data.projects.map(project => {
+        const projectId = project.id.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+        const projectName = escapeHtml(project.name);
+        return `
+          <div class="project-sidebar-item" data-project-id="${projectId}">
+            <div class="project-sidebar-header" onclick="toggleProjectFiles('${projectId}')">
+              <span class="project-icon">📁</span>
+              <span class="project-name">${projectName}</span>
+              <span class="project-toggle">▼</span>
+            </div>
+            <div class="project-files-sidebar" id="project-files-${projectId}" style="display: none;">
+              <div class="project-files-list" id="project-files-list-${projectId}">
+                <!-- 파일 목록이 여기에 동적으로 추가됩니다 -->
+              </div>
+              <div class="project-file-actions-sidebar">
+                <input type="file" id="project-file-input-${projectId}" multiple style="display: none;" onchange="uploadProjectFilesToSidebar('${projectId}')">
+                <button class="btn btn-small btn-primary" onclick="document.getElementById('project-file-input-${projectId}').click()">📎 업로드</button>
+                <button class="btn btn-small btn-secondary" onclick="linkProjectToSession('${projectId}')">🔗 연결</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    } else {
+      sidebarProjectsList.innerHTML = '<div class="no-projects-sidebar"><p>프로젝트가 없습니다</p></div>';
+    }
+  } catch (error) {
+    console.error('Failed to load sidebar projects:', error);
+    if (sidebarProjectsList) {
+      sidebarProjectsList.innerHTML = '<div class="error-message-sidebar">프로젝트를 불러올 수 없습니다</div>';
+    }
+  }
+}
+
+// 프로젝트 파일 목록 토글
+window.toggleProjectFiles = function(projectId) {
+  const filesContainer = document.getElementById(`project-files-${projectId}`);
+  const header = event.target.closest('.project-sidebar-header');
+  if (!header) return;
+  const toggle = header.querySelector('.project-toggle');
+  
+  if (filesContainer) {
+    if (filesContainer.style.display === 'none') {
+      filesContainer.style.display = 'block';
+      toggle.textContent = '▲';
+      // 파일 목록이 비어있으면 로드
+      const filesList = document.getElementById(`project-files-list-${projectId}`);
+      if (filesList && filesList.children.length === 0) {
+        loadProjectFilesToSidebar(projectId);
+      }
+    } else {
+      filesContainer.style.display = 'none';
+      toggle.textContent = '▼';
+    }
+  }
+}
+
+// 프로젝트 파일 목록을 사이드바에 로드
+async function loadProjectFilesToSidebar(projectId) {
+  try {
+    const response = await fetch(`${API_BASE}/project/${projectId}/files`);
+    const data = await response.json();
+    
+    const filesList = document.getElementById(`project-files-list-${projectId}`);
+    if (!filesList) return;
+    
+    if (data.success && data.files && data.files.length > 0) {
+      filesList.innerHTML = data.files.map(file => {
+        const fileId = file.id;
+        const fileName = escapeHtml(file.fileName);
+        return `
+          <div class="project-file-sidebar-item">
+            <span class="file-icon-small">${getFileIcon(file.fileType)}</span>
+            <span class="file-name-small" title="${fileName}">${fileName}</span>
+            <button class="file-delete-btn-small" onclick="deleteProjectFileFromSidebar('${fileId}', '${projectId}')" title="삭제">🗑️</button>
+          </div>
+        `;
+      }).join('');
+    } else {
+      filesList.innerHTML = '<div class="no-files-sidebar">파일이 없습니다</div>';
+    }
+  } catch (error) {
+    console.error('Failed to load project files:', error);
+    const filesList = document.getElementById(`project-files-list-${projectId}`);
+    if (filesList) {
+      filesList.innerHTML = '<div class="error-message-sidebar">파일을 불러올 수 없습니다</div>';
+    }
+  }
+}
+
+// 사이드바에서 프로젝트 파일 업로드
+window.uploadProjectFilesToSidebar = async function(projectId) {
+  const fileInput = document.getElementById(`project-file-input-${projectId}`);
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
+
+  const formData = new FormData();
+  for (const file of fileInput.files) {
+    formData.append('files', file);
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/project/${projectId}/files`, {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      // 파일 목록 새로고침
+      await loadProjectFilesToSidebar(projectId);
+      fileInput.value = '';
+      // 사이드바 프로젝트 목록도 새로고침 (파일 개수 업데이트)
+      await loadSidebarProjects();
+    } else {
+      alert('파일 업로드 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to upload files:', error);
+    alert('파일 업로드 중 오류가 발생했습니다: ' + error.message);
+  }
+}
+
+// 사이드바에서 프로젝트 파일 삭제
+window.deleteProjectFileFromSidebar = async function(fileId, projectId) {
+  if (!confirm('이 파일을 삭제하시겠습니까?')) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/project/file/${fileId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      // 파일 목록 새로고침
+      await loadProjectFilesToSidebar(projectId);
+      // 사이드바 프로젝트 목록도 새로고침
+      await loadSidebarProjects();
+    } else {
+      alert('파일 삭제 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to delete file:', error);
+    alert('파일 삭제 중 오류가 발생했습니다: ' + error.message);
+  }
+}
+
+// 사이드바에서 프로젝트 생성
+async function createProjectFromSidebar() {
+  const name = prompt('프로젝트 이름을 입력하세요:');
+  if (!name) return;
+
+  const description = prompt('프로젝트 설명을 입력하세요 (선택사항):') || '';
+
+  try {
+    const response = await fetch(`${API_BASE}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, name, description })
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      await loadSidebarProjects();
+    } else {
+      alert('프로젝트 생성 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to create project:', error);
+    alert('프로젝트 생성 중 오류가 발생했습니다: ' + error.message);
+  }
+}
+
+// 프로젝트 목록 로드 (모달용)
+async function loadProjects() {
+  try {
+    const projectsList = document.getElementById('projectsList');
+    if (!projectsList) return;
+
+    if (!userId) {
+      projectsList.innerHTML = '<div class="error-message">로그인이 필요합니다.</div>';
+      return;
+    }
+
+    const response = await fetch(`${API_BASE}/projects/${userId}`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+
+    if (data.success && data.projects && data.projects.length > 0) {
+      projectsList.innerHTML = data.projects.map(project => `
+        <div class="project-item" onclick="showProjectDetail('${project.id}')">
+          <div class="project-header">
+            <h4>${escapeHtml(project.name)}</h4>
+            <div class="project-actions-inline">
+              <button class="btn btn-small" onclick="event.stopPropagation(); linkProjectToSession('${project.id}')" title="현재 세션에 연결">🔗 연결</button>
+              <button class="btn btn-small btn-danger" onclick="event.stopPropagation(); deleteProject('${project.id}')" title="삭제">🗑️</button>
+            </div>
+          </div>
+          <p class="project-description">${escapeHtml(project.description || '설명 없음')}</p>
+          <div class="project-meta">
+            <span>생성일: ${new Date(project.createdAt).toLocaleDateString('ko-KR')}</span>
+            <span>수정일: ${new Date(project.updatedAt).toLocaleDateString('ko-KR')}</span>
+          </div>
+        </div>
+      `).join('');
+    } else {
+      projectsList.innerHTML = '<div class="no-projects"><p>프로젝트가 없습니다. 새 프로젝트를 생성해보세요.</p></div>';
+    }
+
+    // 프로젝트 생성 버튼 이벤트 리스너
+    const createProjectBtn = document.getElementById('createProjectBtn');
+    if (createProjectBtn) {
+      createProjectBtn.onclick = createProject;
+    }
+  } catch (error) {
+    console.error('Failed to load projects:', error);
+    const projectsList = document.getElementById('projectsList');
+    if (projectsList) {
+      projectsList.innerHTML = `<div class="error-message">프로젝트를 불러오는 중 오류가 발생했습니다: ${error.message}</div>`;
+    }
+  }
+}
+
+// 프로젝트 생성
+async function createProject() {
+  const name = prompt('프로젝트 이름을 입력하세요:');
+  if (!name) return;
+
+  const description = prompt('프로젝트 설명을 입력하세요 (선택사항):') || '';
+
+  try {
+    const response = await fetch(`${API_BASE}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, name, description })
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      alert('프로젝트가 생성되었습니다.');
+      loadProjects();
+      await loadSidebarProjects();
+    } else {
+      alert('프로젝트 생성 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to create project:', error);
+    alert('프로젝트 생성 중 오류가 발생했습니다: ' + error.message);
+  }
+}
+
+// 프로젝트 상세 보기
+window.showProjectDetail = async function(projectId) {
+  try {
+    const response = await fetch(`${API_BASE}/project/${projectId}`);
+    const data = await response.json();
+
+    if (!data.success || !data.project) {
+      alert('프로젝트를 불러올 수 없습니다.');
+      return;
+    }
+
+    const project = data.project;
+    const content = document.getElementById('projectDetailContent');
+    const title = document.getElementById('projectDetailTitle');
+
+    if (title) {
+      title.textContent = `📁 ${escapeHtml(project.name)}`;
+    }
+
+    if (content) {
+      let html = `
+        <div class="project-detail">
+          <div class="project-info">
+            <p><strong>설명:</strong> ${escapeHtml(project.description || '설명 없음')}</p>
+            <p><strong>생성일:</strong> ${new Date(project.createdAt).toLocaleString('ko-KR')}</p>
+            <p><strong>수정일:</strong> ${new Date(project.updatedAt).toLocaleString('ko-KR')}</p>
+          </div>
+
+          <div class="project-files-section">
+            <div class="project-files-header">
+              <h4>📎 파일 목록</h4>
+              <div class="project-file-actions">
+                <input type="file" id="projectFileInput" multiple style="display: none;" onchange="uploadProjectFiles('${projectId}')">
+                <button class="btn btn-primary" onclick="document.getElementById('projectFileInput').click()">파일 업로드</button>
+                <button class="btn btn-secondary" onclick="linkProjectToSession('${projectId}')">현재 세션에 연결</button>
+              </div>
+            </div>
+            <div id="projectFilesList">
+              ${project.files && project.files.length > 0 
+                ? project.files.map(file => `
+                  <div class="project-file-item">
+                    <div class="file-info">
+                      <span class="file-icon">${getFileIcon(file.fileType)}</span>
+                      <div class="file-details">
+                        <strong>${escapeHtml(file.fileName)}</strong>
+                        <span class="file-meta">${formatFileSize(file.fileSize)} • ${file.fileType}</span>
+                      </div>
+                    </div>
+                    <button class="btn btn-small btn-danger" onclick="deleteProjectFile(${file.id}, '${projectId}')">삭제</button>
+                  </div>
+                `).join('')
+                : '<p class="no-files">업로드된 파일이 없습니다.</p>'
+              }
+            </div>
+          </div>
+        </div>
+      `;
+
+      content.innerHTML = html;
+      openModal('projectDetailModal');
+    }
+  } catch (error) {
+    console.error('Failed to load project detail:', error);
+    alert('프로젝트 상세 정보를 불러오는 중 오류가 발생했습니다: ' + error.message);
+  }
+};
+
+// 프로젝트 파일 업로드
+window.uploadProjectFiles = async function(projectId) {
+  const fileInput = document.getElementById('projectFileInput');
+  if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
+
+  const formData = new FormData();
+  for (const file of fileInput.files) {
+    formData.append('files', file);
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/project/${projectId}/files`, {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      alert(data.message || `${data.files.length}개의 파일이 업로드되었습니다.`);
+      showProjectDetail(projectId);
+      fileInput.value = '';
+    } else {
+      alert('파일 업로드 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to upload files:', error);
+    alert('파일 업로드 중 오류가 발생했습니다: ' + error.message);
+  }
+};
+
+// 프로젝트 파일 삭제
+window.deleteProjectFile = async function(fileId, projectId) {
+  if (!confirm('이 파일을 삭제하시겠습니까?')) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/project/file/${fileId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      alert('파일이 삭제되었습니다.');
+      showProjectDetail(projectId);
+    } else {
+      alert('파일 삭제 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to delete file:', error);
+    alert('파일 삭제 중 오류가 발생했습니다: ' + error.message);
+  }
+};
+
+// 프로젝트 삭제
+window.deleteProject = async function(projectId) {
+  if (!confirm('이 프로젝트를 삭제하시겠습니까? 모든 파일도 함께 삭제됩니다.')) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/project/${projectId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      alert('프로젝트가 삭제되었습니다.');
+      loadProjects();
+      await loadSidebarProjects();
+      closeModal('projectDetailModal');
+    } else {
+      alert('프로젝트 삭제 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to delete project:', error);
+    alert('프로젝트 삭제 중 오류가 발생했습니다: ' + error.message);
+  }
+};
+
+// 프로젝트를 현재 세션에 연결
+window.linkProjectToSession = async function(projectId) {
+  if (!currentSessionId) {
+    alert('먼저 채팅 세션을 시작해주세요.');
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/project/${projectId}/link-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: currentSessionId })
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      alert('프로젝트가 현재 세션에 연결되었습니다. 이제 프로젝트 파일 내용을 기반으로 답변합니다.');
+      closeModal('projectModal');
+      closeModal('projectDetailModal');
+      // 사이드바 프로젝트 목록 새로고침
+      await loadSidebarProjects();
+      // 세션 목록 새로고침 (프로젝트 연결 표시 업데이트)
+      await loadSessions();
+      // 현재 세션 다시 로드하여 프로젝트 정보 표시
+      await window.loadSession(currentSessionId);
+    } else {
+      alert('프로젝트 연결 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to link project:', error);
+    alert('프로젝트 연결 중 오류가 발생했습니다: ' + error.message);
+  }
+};
+
+// 프로젝트 연결 해제
+window.unlinkProjectFromSession = async function(sessionId) {
+  if (!confirm('프로젝트 연결을 해제하시겠습니까?')) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/session/${sessionId}/project`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await response.json();
+    if (data.success) {
+      // UI 업데이트
+      const projectInfo = document.getElementById('projectInfo');
+      if (projectInfo) {
+        projectInfo.style.display = 'none';
+      }
+      
+      // 세션 목록 새로고침
+      await loadSessions();
+      // 사이드바 프로젝트 목록도 새로고침
+      await loadSidebarProjects();
+      alert('프로젝트 연결이 해제되었습니다.');
+    } else {
+      alert('프로젝트 연결 해제 실패: ' + (data.error || '알 수 없는 오류'));
+    }
+  } catch (error) {
+    console.error('Failed to unlink project:', error);
+    alert('프로젝트 연결 해제 중 오류가 발생했습니다: ' + error.message);
+  }
+};
+
+// 파일 아이콘 반환
+function getFileIcon(fileType) {
+  const icons = {
+    'image': '🖼️',
+    'video': '🎬',
+    'code': '💻',
+    'text': '📄',
+    'pdf': '📕',
+    'document': '📘',
+    'other': '📎'
+  };
+  return icons[fileType] || '📎';
+}
+
+// 파일 크기 포맷팅
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
 
 // 이미지 모달 열기
 function openImageModal(imageUrl, imageId) {

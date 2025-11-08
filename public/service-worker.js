@@ -47,6 +47,11 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
+  // chrome-extension, chrome, data 등은 캐싱하지 않음
+  if (url.protocol === 'chrome-extension:' || url.protocol === 'chrome:' || url.protocol === 'data:') {
+    return;
+  }
+
   // API 요청은 네트워크만 사용 (캐싱 안 함)
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
@@ -72,11 +77,19 @@ self.addEventListener('fetch', (event) => {
         }
 
         return fetch(request).then((response) => {
-          // 유효한 응답만 캐시
-          if (response && response.status === 200 && response.type === 'basic') {
+          // 유효한 응답만 캐시 (chrome-extension, chrome, data 등은 제외)
+          const url = new URL(request.url);
+          const isValidScheme = url.protocol === 'http:' || url.protocol === 'https:';
+          
+          if (response && response.status === 200 && response.type === 'basic' && isValidScheme) {
             const responseToCache = response.clone();
             caches.open(RUNTIME_CACHE).then((cache) => {
-              cache.put(request, responseToCache);
+              try {
+                cache.put(request, responseToCache);
+              } catch (error) {
+                // 캐시 실패 시 무시 (chrome-extension 등 지원하지 않는 스킴)
+                console.warn('[Service Worker] Cache put failed:', error);
+              }
             });
           }
           return response;

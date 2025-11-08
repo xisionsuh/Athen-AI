@@ -133,17 +133,51 @@ body {
   background: rgba(102, 126, 234, 0.2);
 }
 
+.session-item.session-with-project {
+  border-left: 3px solid #10b981;
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.session-item.session-with-project:hover {
+  background: rgba(16, 185, 129, 0.2);
+}
+
+.session-item.session-with-project.active {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: #10b981;
+}
+
+.session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.project-badge {
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
 .session-item h4 {
   font-size: 0.9rem;
-  margin-bottom: 0.25rem;
+  margin: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
 }
 
 .session-item p {
   font-size: 0.75rem;
   color: var(--text-secondary);
+  margin: 0.25rem 0 0 0;
+}
+
+.session-project-name {
+  font-size: 0.7rem !important;
+  color: #10b981 !important;
+  font-weight: 500;
 }
 
 .session-delete-btn {
@@ -188,6 +222,177 @@ body {
   font-size: 0.9rem;
 }
 
+/* 사이드바 섹션 */
+.sidebar-section {
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 0.5rem;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.sidebar-section-header h3 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.icon-btn-small {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  transition: all 0.2s;
+  opacity: 0.7;
+}
+
+.icon-btn-small:hover {
+  opacity: 1;
+  background: var(--surface);
+  color: var(--primary-color);
+}
+
+/* 프로젝트 사이드바 아이템 */
+.projects-list {
+  padding: 0 0.5rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.project-sidebar-item {
+  margin-bottom: 0.5rem;
+  background: var(--surface);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.project-sidebar-header {
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.project-sidebar-header:hover {
+  background: rgba(102, 126, 234, 0.1);
+}
+
+.project-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.project-name {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.project-toggle {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+
+/* 프로젝트 파일 사이드바 */
+.project-files-sidebar {
+  padding: 0.5rem 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-top: 1px solid var(--border-color);
+}
+
+.project-files-list {
+  margin-bottom: 0.5rem;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.project-file-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.25rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.file-icon-small {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.file-name-small {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.file-delete-btn-small {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  opacity: 0.5;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.file-delete-btn-small:hover {
+  opacity: 1;
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--error);
+}
+
+.project-file-actions-sidebar {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.project-file-actions-sidebar .btn {
+  flex: 1;
+  font-size: 0.75rem;
+  padding: 0.4rem 0.5rem;
+}
+
+.no-projects-sidebar,
+.no-files-sidebar,
+.error-message-sidebar {
+  padding: 1rem 0.5rem;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.error-message-sidebar {
+  color: var(--error);
+}
+
 .sidebar-footer {
   padding: 1rem;
   border-top: 1px solid var(--border-color);
@@ -229,6 +434,43 @@ body {
 
 .status-dot.offline {
   background: var(--error);
+}
+
+/* 프로젝트 정보 헤더 */
+.project-info-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  margin-top: 0.5rem;
+  background: rgba(16, 185, 129, 0.1);
+  border-radius: 6px;
+  border-left: 3px solid #10b981;
+}
+
+.project-badge-header {
+  font-size: 0.85rem;
+  color: #10b981;
+  font-weight: 500;
+  flex: 1;
+}
+
+.btn-unlink-project {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  transition: all 0.2s;
+  opacity: 0.7;
+}
+
+.btn-unlink-project:hover {
+  opacity: 1;
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--error);
 }
 
 /* 서버 연결 오류 메시지 */
@@ -764,6 +1006,161 @@ body {
 
 .memory-item p {
   color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+/* 장기 기억 저장 제안 UI */
+.memory-suggestion {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  border-left: 3px solid var(--primary-color);
+}
+
+.suggestion-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.suggestion-icon {
+  font-size: 1.2rem;
+}
+
+.suggestion-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.suggestion-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.suggestion-close:hover {
+  background: var(--border-color);
+  color: var(--text-primary);
+}
+
+.suggestion-content {
+  margin-bottom: 1rem;
+}
+
+.suggestion-item {
+  margin-bottom: 0.5rem;
+}
+
+.suggestion-item strong {
+  display: block;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.suggestion-item p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin: 0.25rem 0;
+}
+
+.suggestion-reason {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin-top: 0.5rem;
+}
+
+.suggestion-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.suggestion-btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.suggestion-btn.save-btn {
+  background: var(--primary-color);
+  color: white;
+}
+
+.suggestion-btn.save-btn:hover {
+  background: var(--secondary-color);
+  transform: translateY(-1px);
+}
+
+.suggestion-btn.save-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.suggestion-btn.cancel-btn {
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.suggestion-btn.cancel-btn:hover {
+  background: var(--border-color);
+  color: var(--text-primary);
+}
+
+.suggestion-saved {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--success);
+  padding: 0.5rem 0;
+}
+
+.saved-icon {
+  font-size: 1.2rem;
+}
+
+/* 저장 완료 알림 */
+.memory-saved-notification {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid var(--success);
+  border-radius: 6px;
+  animation: slideDown 0.3s ease-out;
+}
+
+.notification-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.notification-icon {
+  font-size: 1.2rem;
+}
+
+.notification-text {
+  color: var(--success);
   font-size: 0.9rem;
 }
 
@@ -3858,4 +4255,150 @@ kbd + kbd {
   .sessions-list {
     -webkit-overflow-scrolling: touch;
   }
+}
+
+/* 프로젝트 관리 스타일 */
+.project-item {
+  padding: 1rem;
+  background: var(--surface);
+  border-radius: 8px;
+  border-left: 4px solid var(--primary-color);
+  margin-bottom: 1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.project-item:hover {
+  background: var(--border-color);
+  transform: translateX(4px);
+}
+
+.project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.project-header h4 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.project-actions-inline {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-small {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.btn-danger {
+  background: var(--error);
+  color: white;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
+.project-description {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.project-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.no-projects {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-secondary);
+}
+
+.project-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.project-info {
+  padding: 1rem;
+  background: var(--surface);
+  border-radius: 8px;
+}
+
+.project-info p {
+  margin: 0.5rem 0;
+  color: var(--text-secondary);
+}
+
+.project-files-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.project-files-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.project-files-header h4 {
+  margin: 0;
+}
+
+.project-file-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.project-file-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem;
+  background: var(--surface);
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+}
+
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+}
+
+.file-icon {
+  font-size: 1.5rem;
+}
+
+.file-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.file-details strong {
+  color: var(--text-primary);
+}
+
+.file-meta {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.no-files {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-secondary);
 }

@@ -105,7 +105,7 @@ if (process.env.NODE_ENV === 'development') {
 app.use('/auth', createAuthRoutes());
 
 // API 라우트
-app.use('/api', createRoutes(orchestrator, webSearch));
+app.use('/api', createRoutes(orchestrator, webSearch, dbPath));
 
 // 기본 라우트 - HTML 파일에 캐시 방지 헤더 추가
 app.get('/', (req, res) => {

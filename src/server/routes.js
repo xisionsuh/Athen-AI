@@ -5,6 +5,7 @@ import { WebSearchService } from '../utils/webSearch.js';
 import { asyncHandler, createErrorResponse } from '../utils/errorHandler.js';
 import { logger } from '../utils/logger.js';
 import { getDatabase } from '../database/schema.js';
+import { ProjectManager } from '../memory/projectManager.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -29,21 +30,24 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024 // 10MB
   },
   fileFilter: (req, file, cb) => {
-    // 이미지, 비디오, 문서 파일 허용
-    const allowedTypes = /jpeg|jpg|png|gif|webp|pdf|doc|docx|txt|mp4|mov|avi/;
+    // 모든 파일 타입 허용 (Athena AI가 인식하는 모든 파일)
+    // 이미지, 비디오, 문서, 코드 파일 등
+    const allowedTypes = /jpeg|jpg|png|gif|webp|bmp|svg|pdf|doc|docx|xls|xlsx|ppt|pptx|txt|md|json|xml|yaml|yml|csv|js|ts|jsx|tsx|py|java|cpp|c|cs|go|rs|rb|php|swift|kt|html|css|scss|less|sh|bat|ps1|sql|r|m|mm|h|hpp|vue|svelte|mp4|mov|avi|mkv|webm|mp3|wav|flac|ogg|zip|rar|7z|tar|gz/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
     
-    if (extname && mimetype) {
+    // mimetype이 없거나 허용된 확장자인 경우 통과
+    if (!file.mimetype || extname) {
       return cb(null, true);
     } else {
-      cb(new Error('지원하지 않는 파일 형식입니다.'));
+      // mimetype이 있지만 확장자가 없는 경우도 허용 (일부 파일은 mimetype만 있을 수 있음)
+      cb(null, true);
     }
   }
 });
 
-export function createRoutes(orchestrator, webSearch) {
+export function createRoutes(orchestrator, webSearch, dbPath = './data/athena.db') {
   const router = express.Router();
+  const projectManager = new ProjectManager(dbPath);
 
   /**
    * POST /api/chat
@@ -384,15 +388,27 @@ export function createRoutes(orchestrator, webSearch) {
 
   /**
    * GET /api/sessions/:userId
-   * 사용자의 모든 세션 조회
+   * 사용자의 모든 세션 조회 (프로젝트 정보 포함)
    */
   router.get('/sessions/:userId', asyncHandler(async (req, res) => {
       const { userId } = req.params;
       const sessions = orchestrator.memory.getUserSessions(userId);
 
+      // 각 세션에 프로젝트 정보 추가
+      const sessionsWithProjects = sessions.map(session => {
+        const project = projectManager.getSessionProject(session.id);
+        return {
+          ...session,
+          project: project ? {
+            id: project.id,
+            name: project.name
+          } : null
+        };
+      });
+
       res.json({
         success: true,
-        sessions
+        sessions: sessionsWithProjects
       });
   }));
 
@@ -418,6 +434,58 @@ export function createRoutes(orchestrator, webSearch) {
         success: true,
         memoryId: result.lastInsertRowid
       });
+  }));
+
+  /**
+   * POST /api/memory/extract
+   * 장기 기억 추출 (스트리밍 완료 후 호출)
+   */
+  router.post('/memory/extract', asyncHandler(async (req, res) => {
+    const { userId, userMessage, aiResponse } = req.body;
+
+    if (!userId || !userMessage || !aiResponse) {
+      const error = new Error('필수 파라미터 누락: userId, userMessage, aiResponse');
+      error.status = 400;
+      throw error;
+    }
+
+    const memoryExtraction = await orchestrator.processMemoryExtraction(userId, userMessage, aiResponse);
+    
+    res.json({
+      success: true,
+      memoryExtraction: memoryExtraction || null
+    });
+  }));
+
+  /**
+   * POST /api/memory/suggest
+   * 장기 기억 저장 제안 수락
+   */
+  router.post('/memory/suggest', asyncHandler(async (req, res) => {
+    const { userId, category, title, content, tags, importance } = req.body;
+
+    if (!userId || !category || !title || !content) {
+      const error = new Error('필수 파라미터 누락');
+      error.status = 400;
+      throw error;
+    }
+
+    const result = orchestrator.memory.addLongTermMemory(
+      userId,
+      category,
+      title,
+      content,
+      tags || [],
+      importance || 5
+    );
+
+    logger.info('Long-term memory saved (suggestion accepted)', { userId, category, title });
+
+    res.json({
+      success: true,
+      memoryId: result.lastInsertRowid,
+      message: `"${title}"을(를) 장기 기억에 저장했습니다.`
+    });
   }));
 
   /**
@@ -456,6 +524,22 @@ export function createRoutes(orchestrator, webSearch) {
         success: true,
         results
       });
+  }));
+
+  /**
+   * DELETE /api/memory/long-term/:id
+   * 장기 기억 삭제
+   */
+  router.delete('/memory/long-term/:id', asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    orchestrator.memory.deleteLongTermMemory(id);
+    logger.info('Long-term memory deleted', { id });
+
+    res.json({
+      success: true,
+      message: '장기 기억이 삭제되었습니다.'
+    });
   }));
 
   /**
@@ -537,6 +621,198 @@ export function createRoutes(orchestrator, webSearch) {
         ...results
       });
   }));
+
+  // ==================== 프로젝트 관리 API ====================
+  // 프로젝트 라우트는 다른 동적 라우트보다 먼저 정의해야 함
+
+  /**
+   * POST /api/projects
+   * 프로젝트 생성
+   */
+  router.post('/projects', asyncHandler(async (req, res) => {
+    const { userId, name, description } = req.body;
+
+    if (!userId || !name) {
+      const error = new Error('필수 파라미터 누락: userId, name');
+      error.status = 400;
+      throw error;
+    }
+
+    const project = projectManager.createProject(userId, name, description || '');
+
+    res.json({
+      success: true,
+      project
+    });
+  }));
+
+  /**
+   * GET /api/projects/:userId
+   * 사용자의 모든 프로젝트 조회
+   */
+  router.get('/projects/:userId', asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+
+    const projects = projectManager.getUserProjects(userId);
+
+    res.json({
+      success: true,
+      projects
+    });
+  }));
+
+  /**
+   * GET /api/project/:projectId
+   * 프로젝트 상세 조회
+   */
+  router.get('/project/:projectId', asyncHandler(async (req, res) => {
+    const { projectId } = req.params;
+
+    const project = projectManager.getProject(projectId);
+    if (!project) {
+      const error = new Error('Project not found');
+      error.status = 404;
+      throw error;
+    }
+
+    const files = projectManager.getProjectFiles(projectId);
+
+    res.json({
+      success: true,
+      project: {
+        ...project,
+        files
+      }
+    });
+  }));
+
+  /**
+   * DELETE /api/project/:projectId
+   * 프로젝트 삭제
+   */
+  router.delete('/project/:projectId', asyncHandler(async (req, res) => {
+    const { projectId } = req.params;
+
+    projectManager.deleteProject(projectId);
+
+    res.json({
+      success: true,
+      message: '프로젝트가 삭제되었습니다.'
+    });
+  }));
+
+  /**
+   * POST /api/project/:projectId/files
+   * 프로젝트에 파일 업로드
+   */
+  router.post('/project/:projectId/files', upload.array('files', 50), asyncHandler(async (req, res) => {
+    const { projectId } = req.params;
+    const files = req.files || [];
+
+    if (files.length === 0) {
+      const error = new Error('파일이 없습니다.');
+      error.status = 400;
+      throw error;
+    }
+
+    const uploadedFiles = [];
+    for (const file of files) {
+      try {
+        const result = await projectManager.addFileToProject(
+          projectId,
+          file.path,
+          file.originalname,
+          file.mimetype,
+          file.size
+        );
+        uploadedFiles.push(result);
+
+        // 임시 파일 삭제
+        try {
+          fs.unlinkSync(file.path);
+        } catch (error) {
+          logger.warn('Failed to delete temp file', error);
+        }
+      } catch (error) {
+        logger.error('Failed to add file to project', error, { projectId, fileName: file.originalname });
+      }
+    }
+
+    res.json({
+      success: true,
+      files: uploadedFiles,
+      message: `${uploadedFiles.length}개의 파일이 업로드되었습니다.`
+    });
+  }));
+
+  /**
+   * GET /api/project/:projectId/files
+   * 프로젝트 파일 목록 조회
+   */
+  router.get('/project/:projectId/files', asyncHandler(async (req, res) => {
+    const { projectId } = req.params;
+
+    const files = projectManager.getProjectFiles(projectId);
+
+    res.json({
+      success: true,
+      files
+    });
+  }));
+
+  /**
+   * DELETE /api/project/file/:fileId
+   * 프로젝트 파일 삭제
+   */
+  router.delete('/project/file/:fileId', asyncHandler(async (req, res) => {
+    const { fileId } = req.params;
+
+    projectManager.deleteProjectFile(fileId);
+
+    res.json({
+      success: true,
+      message: '파일이 삭제되었습니다.'
+    });
+  }));
+
+  /**
+   * POST /api/project/:projectId/link-session
+   * 세션을 프로젝트에 연결
+   */
+  router.post('/project/:projectId/link-session', asyncHandler(async (req, res) => {
+    const { projectId } = req.params;
+    const { sessionId } = req.body;
+
+    if (!sessionId) {
+      const error = new Error('필수 파라미터 누락: sessionId');
+      error.status = 400;
+      throw error;
+    }
+
+    projectManager.linkSessionToProject(sessionId, projectId);
+
+    res.json({
+      success: true,
+      message: '세션이 프로젝트에 연결되었습니다.'
+    });
+  }));
+
+  /**
+   * GET /api/session/:sessionId/project
+   * 세션의 프로젝트 조회
+   */
+  router.get('/session/:sessionId/project', asyncHandler(async (req, res) => {
+    const { sessionId } = req.params;
+
+    const project = projectManager.getSessionProject(sessionId);
+
+    res.json({
+      success: true,
+      project: project || null
+    });
+  }));
+
+  // ==================== 성능 모니터링 API ====================
 
   /**
    * GET /api/performance/stats
@@ -995,7 +1271,7 @@ export function createRoutes(orchestrator, webSearch) {
       const plugins = orchestrator.pluginLoader.getPlugins();
       res.json({
         success: true,
-        plugins: plugins || []
+        plugins: Array.isArray(plugins) ? plugins : []
       });
     } catch (error) {
       logger.error('Failed to get plugins', error);

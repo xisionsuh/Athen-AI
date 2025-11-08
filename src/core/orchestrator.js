@@ -1,4 +1,5 @@
 import { MemoryManager } from '../memory/memoryManager.js';
+import { ProjectManager } from '../memory/projectManager.js';
 import { OpenAIProvider } from '../ai/providers/openai.js';
 import { GeminiProvider } from '../ai/providers/gemini.js';
 import { ClaudeProvider } from '../ai/providers/claude.js';
@@ -6,6 +7,7 @@ import { GrokProvider } from '../ai/providers/grok.js';
 import { PerformanceMonitor } from '../utils/performanceMonitor.js';
 import { logger } from '../utils/logger.js';
 import { MCPManager } from '../mcp/mcpManager.js';
+import { PluginLoader } from '../plugins/pluginLoader.js';
 
 /**
  * Athena Brain - AI Orchestrator
@@ -20,6 +22,7 @@ import { MCPManager } from '../mcp/mcpManager.js';
 export class AthenaOrchestrator {
   constructor(config) {
     this.memory = new MemoryManager(config.dbPath);
+    this.projectManager = new ProjectManager(config.dbPath);
     this.providers = this.initializeProviders(config);
     // 총괄 AI(Meta AI 역할) 우선순위: GPT → Gemini → Claude → Grok
     this.fallbackOrder = ['ChatGPT', 'Gemini', 'Claude', 'Grok'];
@@ -36,11 +39,18 @@ export class AthenaOrchestrator {
     });
     
     // Plugin Loader 초기화
-    this.pluginLoader = new PluginLoader(config.pluginsDir);
     if (config.pluginsEnabled !== false) {
-      this.pluginLoader.loadPlugins().catch(error => {
-        logger.error('Failed to load plugins', error);
-      });
+      try {
+        this.pluginLoader = new PluginLoader(config.pluginsDir);
+        this.pluginLoader.loadPlugins().catch(error => {
+          logger.error('Failed to load plugins', error);
+        });
+      } catch (error) {
+        logger.warn('Plugin system not available', error);
+        this.pluginLoader = null;
+      }
+    } else {
+      this.pluginLoader = null;
     }
   }
 
@@ -709,6 +719,12 @@ URL: ${result.link}
         result.content = await this.pluginLoader.executeHook('afterMessage', result.content, userId, sessionId);
       }
 
+      // 6. 장기 기억 추출 처리
+      const memoryExtraction = await this.processMemoryExtraction(userId, userMessage, result.content);
+      if (memoryExtraction) {
+        result.memoryExtraction = memoryExtraction;
+      }
+
       return result;
     } catch (error) {
       console.error('Processing error:', error);
@@ -734,6 +750,9 @@ URL: ${result.link}
     const identity = this.memory.getAllIdentity('core');
 
     let systemPrompt = this.buildAthenaSystemPrompt(identity);
+    
+    // 프로젝트 컨텍스트 추가
+    systemPrompt = this.addProjectContextToPrompt(systemPrompt, sessionId);
     
     // 웹 검색 결과가 있으면 시스템 프롬프트에 추가
     if (searchResults && searchResults.length > 0 && this.webSearchService) {
@@ -812,6 +831,9 @@ URL: ${result.link}
     const identity = this.memory.getAllIdentity('core');
     
     let systemPrompt = this.buildAthenaSystemPrompt(identity);
+    
+    // 프로젝트 컨텍스트 추가
+    systemPrompt = this.addProjectContextToPrompt(systemPrompt, sessionId);
     
     // 웹 검색 결과가 있으면 시스템 프롬프트에 추가
     if (searchResults && searchResults.length > 0 && this.webSearchService) {
@@ -942,6 +964,9 @@ ${results.map((r, i) => `[${r.agent}의 답변]\n${r.content}\n`).join('\n')}
     
     let baseSystemPrompt = this.buildAthenaSystemPrompt(identity);
     
+    // 프로젝트 컨텍스트 추가
+    baseSystemPrompt = this.addProjectContextToPrompt(baseSystemPrompt, sessionId);
+    
     // 웹 검색 결과가 있으면 시스템 프롬프트에 추가
     if (searchResults && searchResults.length > 0 && this.webSearchService) {
       const searchContext = this.webSearchService.formatResultsForAI(searchResults);
@@ -1010,6 +1035,9 @@ ${debates.map((round, i) =>
     
     let baseSystemPrompt = this.buildAthenaSystemPrompt(identity);
     
+    // 프로젝트 컨텍스트 추가
+    baseSystemPrompt = this.addProjectContextToPrompt(baseSystemPrompt, sessionId);
+    
     // 웹 검색 결과가 있으면 시스템 프롬프트에 추가
     if (searchResults && searchResults.length > 0 && this.webSearchService) {
       const searchContext = this.webSearchService.formatResultsForAI(searchResults);
@@ -1077,6 +1105,9 @@ ${votes.map(v => `[${v.agent}]\n${v.response}`).join('\n\n')}
     const identity = this.memory.getAllIdentity('core');
     
     let systemPrompt = this.buildAthenaSystemPrompt(identity);
+    
+    // 프로젝트 컨텍스트 추가
+    systemPrompt = this.addProjectContextToPrompt(systemPrompt, sessionId);
     
     if (searchResults && searchResults.length > 0 && this.webSearchService) {
       const searchContextWithNumbers = searchResults.map((result, index) => {
@@ -1269,6 +1300,9 @@ ${results.map((r, i) => `[${r.agent}의 답변]\n${r.content}\n`).join('\n')}
     
     let baseSystemPrompt = this.buildAthenaSystemPrompt(identity);
     
+    // 프로젝트 컨텍스트 추가
+    baseSystemPrompt = this.addProjectContextToPrompt(baseSystemPrompt, sessionId);
+    
     if (searchResults && searchResults.length > 0 && this.webSearchService) {
       const searchContext = this.webSearchService.formatResultsForAI(searchResults);
       baseSystemPrompt += `\n\n## 최신 웹 검색 정보\n다음은 최신 정보를 위해 웹에서 검색한 결과입니다. 이 정보를 참고하여 정확하고 최신의 답변을 제공하세요:\n\n${searchContext}\n\n중요: 모든 정보는 위의 검색 결과를 기반으로 답변하고, 각 정보의 출처를 명시하세요.`;
@@ -1396,6 +1430,9 @@ ${debates.map((round, i) =>
     const identity = this.memory.getAllIdentity('core');
     
     let baseSystemPrompt = this.buildAthenaSystemPrompt(identity);
+    
+    // 프로젝트 컨텍스트 추가
+    baseSystemPrompt = this.addProjectContextToPrompt(baseSystemPrompt, sessionId);
     
     if (searchResults && searchResults.length > 0 && this.webSearchService) {
       const searchContext = this.webSearchService.formatResultsForAI(searchResults);
@@ -1537,5 +1574,214 @@ ${identity.map(i => `- ${i.key}: ${JSON.stringify(i.value)}`).join('\n')}
     }
 
     return prompt;
+  }
+
+  /**
+   * 프로젝트 컨텍스트를 시스템 프롬프트에 추가
+   */
+  addProjectContextToPrompt(systemPrompt, sessionId) {
+    try {
+      const project = this.projectManager.getSessionProject(sessionId);
+      if (project) {
+        const projectContext = this.projectManager.getProjectContext(project.id);
+        if (projectContext && projectContext.length > 0) {
+          let projectContextText = `\n\n## 프로젝트 파일 컨텍스트\n다음은 현재 프로젝트 "${project.name}"에 업로드된 파일들의 내용입니다. 사용자의 질문에 답할 때 이 파일들의 내용을 우선적으로 참고하세요:\n\n`;
+          
+          for (const file of projectContext) {
+            if (file.type === 'text') {
+              // 텍스트 파일 내용 (최대 10000자)
+              const content = file.content.length > 10000 
+                ? file.content.substring(0, 10000) + '\n...(내용이 길어 일부만 표시)'
+                : file.content;
+              projectContextText += `### 파일: ${file.fileName}\n\`\`\`\n${content}\n\`\`\`\n\n`;
+            } else if (file.type === 'image') {
+              projectContextText += `### 이미지 파일: ${file.fileName}\n(이미지 파일은 별도로 처리됩니다)\n\n`;
+            } else {
+              projectContextText += `### 파일: ${file.fileName} (${file.fileType})\n\n`;
+            }
+          }
+          
+          systemPrompt += projectContextText;
+          logger.info('Project context added to prompt', { projectId: project.id, fileCount: projectContext.length });
+        }
+      }
+    } catch (error) {
+      logger.warn('Failed to load project context', error);
+    }
+    
+    return systemPrompt;
+  }
+
+  /**
+   * 명시적 기억 요청 감지
+   */
+  detectExplicitMemoryRequest(message) {
+    const patterns = [
+      /이건?\s*기억해(줘|야|)/,
+      /이\s*정보?\s*저장해(줘|야|)/,
+      /나중에\s*쓸\s*거니까?\s*저장해/,
+      /장기\s*기억에?\s*추가해(줘|야|)/,
+      /기억해(둬|줘|야)/,
+      /저장해(둬|줘|야)/,
+      /기억해(주세요|주시겠어요)/,
+      /저장해(주세요|주시겠어요)/
+    ];
+    
+    return patterns.some(pattern => pattern.test(message));
+  }
+
+  /**
+   * 장기 기억 추출 처리 (명시적 요청 + 자동 감지)
+   */
+  async processMemoryExtraction(userId, userMessage, aiResponse) {
+    try {
+      // 1. 명시적 요청 감지
+      const isExplicitRequest = this.detectExplicitMemoryRequest(userMessage);
+      
+      if (isExplicitRequest) {
+        // 명시적 요청: 즉시 저장
+        const extracted = await this.extractLongTermMemory(userId, userMessage, aiResponse, true);
+        if (extracted && extracted.shouldExtract) {
+          // 즉시 저장
+          this.memory.addLongTermMemory(
+            userId,
+            extracted.category,
+            extracted.title,
+            extracted.content,
+            extracted.tags || [],
+            extracted.importance || 7
+          );
+          
+          logger.info('Long-term memory saved (explicit request)', {
+            userId,
+            category: extracted.category,
+            title: extracted.title
+          });
+          
+          return {
+            type: 'saved',
+            category: extracted.category,
+            title: extracted.title,
+            content: extracted.content,
+            message: `"${extracted.title}"을(를) 장기 기억에 저장했습니다.`
+          };
+        }
+      } else {
+        // 자동 감지: 저장 제안
+        const extracted = await this.extractLongTermMemory(userId, userMessage, aiResponse, false);
+        if (extracted && extracted.shouldExtract) {
+          return {
+            type: 'suggestion',
+            category: extracted.category,
+            title: extracted.title,
+            content: extracted.content,
+            importance: extracted.importance,
+            reason: extracted.reason,
+            tags: extracted.tags || []
+          };
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      logger.error('Memory extraction failed', error);
+      return null;
+    }
+  }
+
+  /**
+   * 장기 기억 추출 (AI 판단)
+   */
+  async extractLongTermMemory(userId, userMessage, aiResponse, isExplicitRequest = false) {
+    try {
+      const brain = await this.selectBrain();
+      if (!brain) return null;
+
+      const extractionPrompt = `다음 대화에서 장기 기억으로 저장할 만한 정보를 추출하세요.
+
+사용자 메시지: ${userMessage}
+AI 응답: ${aiResponse}
+명시적 요청 여부: ${isExplicitRequest ? '예' : '아니오'}
+
+${isExplicitRequest ? 
+  '사용자가 명시적으로 기억해달라고 요청했습니다. 요청한 내용을 장기 기억으로 저장하세요.' :
+  '다음 기준으로 판단하여 장기 기억으로 저장할 만한 정보가 있는지 확인하세요:'}
+
+1. 사용자 선호도 (preference): 
+   - "~를 좋아해", "~ 스타일로 해줘", "~를 선호해"
+   - 반복적으로 언급되는 선호사항 (3회 이상)
+   - 예: "간결한 답변 선호", "코드 예제 주석 포함 선호"
+
+2. 프로젝트 정보 (project):
+   - "~ 프로젝트 진행 중", "~ 작업 중", "~ 만들고 있어"
+   - 프로젝트명, 기술 스택, 목표 등
+   - 예: "React 쇼핑몰 앱 프로젝트", "Python 데이터 분석 작업"
+
+3. 사실 정보 (fact):
+   - 개인 정보 (직업, 거주지, 취미 등)
+   - 중요한 사실 (알레르기, 선호도 등)
+   - 예: "서울 거주", "개발자 직업"
+
+중요도 점수 (importance):
+- 사용자가 명시적으로 언급: 9-10점
+- 반복적으로 언급 (3회 이상): 7-8점
+- 프로젝트 관련: 6-7점
+- 일반 선호도: 5-6점
+
+${isExplicitRequest ? 
+  '반드시 저장해야 합니다. shouldExtract는 true로 설정하세요.' :
+  '중요하고 반복적으로 사용될 가능성이 높은 정보만 추출하세요. 불확실하면 shouldExtract를 false로 설정하세요.'}
+
+다음 JSON 형식으로만 응답하세요 (다른 텍스트 없이):
+{
+  "shouldExtract": true/false,
+  "category": "preference|project|fact",
+  "title": "제목 (간결하게)",
+  "content": "내용 (상세하게)",
+  "importance": 1-10,
+  "tags": ["태그1", "태그2"],
+  "reason": "추출 이유 (자동 감지인 경우에만)"
+}`;
+
+      const response = await brain.chat([
+        { role: 'system', content: 'You are a memory extraction assistant. Respond only with valid JSON.' },
+        { role: 'user', content: extractionPrompt }
+      ]);
+
+      // JSON 파싱
+      let extracted;
+      try {
+        // 응답이 객체인 경우 content 속성 사용
+        const responseText = typeof response === 'string' ? response : (response.content || JSON.stringify(response));
+        
+        // 응답에서 JSON만 추출
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          extracted = JSON.parse(jsonMatch[0]);
+        } else {
+          extracted = JSON.parse(responseText);
+        }
+      } catch (parseError) {
+        logger.warn('Failed to parse memory extraction response', { response, error: parseError });
+        return null;
+      }
+
+      if (extracted && extracted.shouldExtract && extracted.category && extracted.title && extracted.content) {
+        return {
+          shouldExtract: true,
+          category: extracted.category,
+          title: extracted.title,
+          content: extracted.content,
+          importance: extracted.importance || (isExplicitRequest ? 9 : 5),
+          tags: extracted.tags || [],
+          reason: extracted.reason || ''
+        };
+      }
+
+      return null;
+    } catch (error) {
+      logger.error('Memory extraction error', error);
+      return null;
+    }
   }
 }
