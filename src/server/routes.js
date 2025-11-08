@@ -895,6 +895,94 @@ export function createRoutes(orchestrator, webSearch) {
   }));
 
   /**
+   * GET /api/learning/patterns
+   * 학습 패턴 데이터 조회
+   */
+  router.get('/learning/patterns', asyncHandler(async (req, res) => {
+    const { userId } = req.query;
+    const days = parseInt(req.query.days) || 30;
+
+    if (!userId) {
+      const error = new Error('필수 파라미터 누락: userId');
+      error.status = 400;
+      throw error;
+    }
+
+    const patterns = orchestrator.memory.getLearningPatterns(userId, days);
+    
+    res.json({
+      success: true,
+      patterns
+    });
+  }));
+
+  /**
+   * GET /api/learning/ai-selection
+   * AI 선택 패턴 조회
+   */
+  router.get('/learning/ai-selection', asyncHandler(async (req, res) => {
+    const { userId } = req.query;
+    const days = parseInt(req.query.days) || 30;
+
+    if (!userId) {
+      const error = new Error('필수 파라미터 누락: userId');
+      error.status = 400;
+      throw error;
+    }
+
+    const patterns = orchestrator.memory.getAISelectionPatterns(userId, days);
+    
+    res.json({
+      success: true,
+      ...patterns
+    });
+  }));
+
+  /**
+   * GET /api/learning/satisfaction-trend
+   * 사용자 만족도 추이 조회
+   */
+  router.get('/learning/satisfaction-trend', asyncHandler(async (req, res) => {
+    const { userId } = req.query;
+    const days = parseInt(req.query.days) || 30;
+
+    if (!userId) {
+      const error = new Error('필수 파라미터 누락: userId');
+      error.status = 400;
+      throw error;
+    }
+
+    const trend = orchestrator.memory.getSatisfactionTrend(userId, days);
+    
+    res.json({
+      success: true,
+      trend
+    });
+  }));
+
+  /**
+   * GET /api/learning/strategy-heatmap
+   * 전략 선택 패턴 히트맵 데이터 조회
+   */
+  router.get('/learning/strategy-heatmap', asyncHandler(async (req, res) => {
+    const { userId } = req.query;
+    const days = parseInt(req.query.days) || 30;
+
+    if (!userId) {
+      const error = new Error('필수 파라미터 누락: userId');
+      error.status = 400;
+      throw error;
+    }
+
+    const heatmapData = orchestrator.memory.getStrategyHeatmapData(userId, days);
+    
+    res.json({
+      success: true,
+      ...heatmapData
+    });
+  }));
+
+  /**
    * GET /api/voting/feedback/:sessionId/:voteId
    * Voting 선택 피드백 통계 조회
    */

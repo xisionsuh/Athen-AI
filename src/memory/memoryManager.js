@@ -296,6 +296,237 @@ export class MemoryManager {
   }
 
   /**
+   * 학습 패턴 데이터 조회 (시각화용)
+   */
+  getLearningPatterns(userId, days = 30) {
+    try {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      const startTimestamp = startDate.toISOString();
+
+      const stmt = this.db.prepare(`
+        SELECT 
+          DATE(created_at) as date,
+          decision_type,
+          process,
+          ai_used
+        FROM decision_log
+        WHERE user_id = ? AND created_at >= ?
+        ORDER BY created_at ASC
+      `);
+      
+      const logs = stmt.all(userId, startTimestamp).map(row => {
+        try {
+          return {
+            date: row.date,
+            decisionType: row.decision_type,
+            process: JSON.parse(row.process),
+            aiUsed: JSON.parse(row.ai_used)
+          };
+        } catch (e) {
+          return null;
+        }
+      }).filter(log => log && log.process);
+
+      return logs;
+    } catch (error) {
+      console.error('Failed to get learning patterns', error);
+      return [];
+    }
+  }
+
+  /**
+   * AI 선택 패턴 분석 (시각화용)
+   */
+  getAISelectionPatterns(userId, days = 30) {
+    try {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      const startTimestamp = startDate.toISOString();
+
+      const stmt = this.db.prepare(`
+        SELECT 
+          process,
+          ai_used
+        FROM decision_log
+        WHERE user_id = ? 
+        AND decision_type = 'strategy_analysis'
+        AND created_at >= ?
+      `);
+      
+      const logs = stmt.all(userId, startTimestamp).map(row => {
+        try {
+          const process = JSON.parse(row.process);
+          const aiUsed = JSON.parse(row.ai_used);
+          return {
+            strategy: process?.strategy || {},
+            aiUsed: Array.isArray(aiUsed) ? aiUsed : [aiUsed],
+            category: process?.strategy?.category || 'unknown',
+            mode: process?.strategy?.collaborationMode || 'unknown'
+          };
+        } catch (e) {
+          return null;
+        }
+      }).filter(log => log);
+
+      // AI별 선택 횟수 집계
+      const aiSelectionCount = {};
+      const categoryPattern = {};
+      const modePattern = {};
+
+      logs.forEach(log => {
+        // AI 선택 횟수
+        log.aiUsed.forEach(ai => {
+          aiSelectionCount[ai] = (aiSelectionCount[ai] || 0) + 1;
+        });
+
+        // 카테고리별 패턴
+        const category = log.category;
+        if (!categoryPattern[category]) {
+          categoryPattern[category] = {};
+        }
+        log.aiUsed.forEach(ai => {
+          categoryPattern[category][ai] = (categoryPattern[category][ai] || 0) + 1;
+        });
+
+        // 모드별 패턴
+        const mode = log.mode;
+        if (!modePattern[mode]) {
+          modePattern[mode] = {};
+        }
+        log.aiUsed.forEach(ai => {
+          modePattern[mode][ai] = (modePattern[mode][ai] || 0) + 1;
+        });
+      });
+
+      return {
+        aiSelectionCount,
+        categoryPattern,
+        modePattern,
+        totalDecisions: logs.length
+      };
+    } catch (error) {
+      console.error('Failed to get AI selection patterns', error);
+      return {
+        aiSelectionCount: {},
+        categoryPattern: {},
+        modePattern: {},
+        totalDecisions: 0
+      };
+    }
+  }
+
+  /**
+   * 사용자 만족도 추이 조회 (시각화용)
+   */
+  getSatisfactionTrend(userId, days = 30) {
+    try {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      const startTimestamp = startDate.toISOString();
+
+      // ai_performance 테이블에서 만족도 데이터 조회
+      const db = this.db;
+      const stmt = db.prepare(`
+        SELECT 
+          DATE(updated_at) as date,
+          ai_provider,
+          task_type,
+          user_satisfaction,
+          total_uses
+        FROM ai_performance
+        WHERE updated_at >= ?
+        ORDER BY updated_at ASC
+      `);
+      
+      const records = stmt.all(startTimestamp);
+      
+      // 날짜별로 그룹화
+      const dailySatisfaction = {};
+      records.forEach(record => {
+        const date = record.date;
+        if (!dailySatisfaction[date]) {
+          dailySatisfaction[date] = {
+            total: 0,
+            sum: 0,
+            count: 0
+          };
+        }
+        // 가중 평균 계산 (total_uses를 가중치로 사용)
+        const weight = record.total_uses || 1;
+        dailySatisfaction[date].sum += (record.user_satisfaction || 0.5) * weight;
+        dailySatisfaction[date].total += weight;
+        dailySatisfaction[date].count += 1;
+      });
+
+      // 평균 만족도 계산
+      const trend = Object.entries(dailySatisfaction).map(([date, data]) => ({
+        date,
+        satisfaction: data.total > 0 ? data.sum / data.total : 0.5,
+        count: data.count
+      })).sort((a, b) => a.date.localeCompare(b.date));
+
+      return trend;
+    } catch (error) {
+      console.error('Failed to get satisfaction trend', error);
+      return [];
+    }
+  }
+
+  /**
+   * 전략 선택 패턴 히트맵 데이터 조회
+   */
+  getStrategyHeatmapData(userId, days = 30) {
+    try {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      const startTimestamp = startDate.toISOString();
+
+      const stmt = this.db.prepare(`
+        SELECT 
+          process
+        FROM decision_log
+        WHERE user_id = ? 
+        AND decision_type = 'strategy_analysis'
+        AND created_at >= ?
+      `);
+      
+      const logs = stmt.all(userId, startTimestamp).map(row => {
+        try {
+          const process = JSON.parse(row.process);
+          return process?.strategy || null;
+        } catch (e) {
+          return null;
+        }
+      }).filter(strategy => strategy);
+
+      // 카테고리와 모드 조합별 집계
+      const heatmapData = {};
+      logs.forEach(strategy => {
+        const category = strategy.category || 'unknown';
+        const mode = strategy.collaborationMode || 'unknown';
+        const key = `${category}-${mode}`;
+        heatmapData[key] = (heatmapData[key] || 0) + 1;
+      });
+
+      return {
+        heatmapData,
+        categories: [...new Set(logs.map(s => s.category || 'unknown'))],
+        modes: [...new Set(logs.map(s => s.collaborationMode || 'unknown'))],
+        total: logs.length
+      };
+    } catch (error) {
+      console.error('Failed to get strategy heatmap data', error);
+      return {
+        heatmapData: {},
+        categories: [],
+        modes: [],
+        total: 0
+      };
+    }
+  }
+
+  /**
    * 특정 협업 모드의 성공 패턴 분석
    */
   analyzeModePatterns(userId, mode, limit = 20) {
