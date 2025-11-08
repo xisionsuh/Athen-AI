@@ -383,6 +383,235 @@ export class PerformanceMonitor {
   }
 
   /**
+   * 성능 경고 체크 (느린 응답, 낮은 성공률 등)
+   */
+  checkPerformanceAlerts(providerName = null, taskType = null) {
+    const alerts = [];
+    const threshold = {
+      slowResponseTime: 5000, // 5초 이상
+      lowSuccessRate: 0.7, // 70% 미만
+      lowSatisfaction: 0.5 // 50% 미만
+    };
+
+    try {
+      let query = 'SELECT * FROM ai_performance WHERE 1=1';
+      const params = [];
+
+      if (providerName) {
+        query += ' AND ai_provider = ?';
+        params.push(providerName);
+      }
+
+      if (taskType) {
+        query += ' AND task_type = ?';
+        params.push(taskType);
+      }
+
+      query += ' AND total_uses >= 5'; // 최소 5회 사용된 경우만
+
+      const stats = this.db.prepare(query).all(...params);
+
+      for (const stat of stats) {
+        // 느린 응답 시간 경고
+        if (stat.avg_response_time > threshold.slowResponseTime) {
+          alerts.push({
+            type: 'slow_response',
+            severity: stat.avg_response_time > threshold.slowResponseTime * 2 ? 'high' : 'medium',
+            provider: stat.ai_provider,
+            taskType: stat.task_type,
+            message: `${stat.ai_provider}의 ${stat.task_type} 작업 평균 응답 시간이 ${(stat.avg_response_time / 1000).toFixed(1)}초로 느립니다.`,
+            value: stat.avg_response_time,
+            threshold: threshold.slowResponseTime
+          });
+        }
+
+        // 낮은 성공률 경고
+        if (stat.success_rate < threshold.lowSuccessRate) {
+          alerts.push({
+            type: 'low_success_rate',
+            severity: stat.success_rate < threshold.lowSuccessRate * 0.7 ? 'high' : 'medium',
+            provider: stat.ai_provider,
+            taskType: stat.task_type,
+            message: `${stat.ai_provider}의 ${stat.task_type} 작업 성공률이 ${(stat.success_rate * 100).toFixed(1)}%로 낮습니다.`,
+            value: stat.success_rate,
+            threshold: threshold.lowSuccessRate
+          });
+        }
+
+        // 낮은 사용자 만족도 경고
+        if (stat.user_satisfaction && stat.user_satisfaction < threshold.lowSatisfaction) {
+          alerts.push({
+            type: 'low_satisfaction',
+            severity: stat.user_satisfaction < threshold.lowSatisfaction * 0.7 ? 'high' : 'medium',
+            provider: stat.ai_provider,
+            taskType: stat.task_type,
+            message: `${stat.ai_provider}의 ${stat.task_type} 작업 사용자 만족도가 ${(stat.user_satisfaction * 100).toFixed(1)}%로 낮습니다.`,
+            value: stat.user_satisfaction,
+            threshold: threshold.lowSatisfaction
+          });
+        }
+      }
+
+      return alerts;
+    } catch (error) {
+      logger.error('Failed to check performance alerts', error);
+      return [];
+    }
+  }
+
+  /**
+   * 성능 히스토리 조회 (그래프용)
+   */
+  getPerformanceHistory(providerName = null, taskType = null, hours = 24) {
+    try {
+      const startTime = new Date();
+      startTime.setHours(startTime.getHours() - hours);
+      const startTimestamp = startTime.toISOString();
+
+      let query = `
+        SELECT 
+          ai_provider,
+          task_type,
+          hour_timestamp,
+          AVG(response_time) as avg_response_time,
+          AVG(success_rate) as avg_success_rate,
+          SUM(total_calls) as total_calls
+        FROM performance_history
+        WHERE hour_timestamp >= ?
+      `;
+      const params = [startTimestamp];
+
+      if (providerName) {
+        query += ' AND ai_provider = ?';
+        params.push(providerName);
+      }
+
+      if (taskType) {
+        query += ' AND task_type = ?';
+        params.push(taskType);
+      }
+
+      query += ' GROUP BY ai_provider, task_type, hour_timestamp ORDER BY hour_timestamp ASC';
+
+      const history = this.db.prepare(query).all(...params);
+
+      return history.map(record => ({
+        provider: record.ai_provider,
+        taskType: record.task_type,
+        timestamp: record.hour_timestamp,
+        avgResponseTime: record.avg_response_time,
+        avgSuccessRate: record.avg_success_rate,
+        totalCalls: record.total_calls
+      }));
+    } catch (error) {
+      logger.error('Failed to get performance history', error);
+      return [];
+    }
+  }
+
+  /**
+   * AI별 성능 비교 데이터 조회
+   */
+  getProviderComparison(taskType = null, limit = 10) {
+    try {
+      let query = `
+        SELECT 
+          ai_provider,
+          task_type,
+          AVG(success_rate) as avg_success_rate,
+          AVG(avg_response_time) as avg_response_time,
+          AVG(user_satisfaction) as avg_satisfaction,
+          SUM(total_uses) as total_uses
+        FROM ai_performance
+        WHERE total_uses >= 3
+      `;
+      const params = [];
+
+      if (taskType) {
+        query += ' AND task_type = ?';
+        params.push(taskType);
+      }
+
+      query += ' GROUP BY ai_provider, task_type ORDER BY total_uses DESC LIMIT ?';
+      params.push(limit);
+
+      const comparison = this.db.prepare(query).all(...params);
+
+      return comparison.map(record => ({
+        provider: record.ai_provider,
+        taskType: record.task_type,
+        avgSuccessRate: record.avg_success_rate,
+        avgResponseTime: record.avg_response_time,
+        avgSatisfaction: record.avg_satisfaction || 0.5,
+        totalUses: record.total_uses
+      }));
+    } catch (error) {
+      logger.error('Failed to get provider comparison', error);
+      return [];
+    }
+  }
+
+  /**
+   * API 사용량 통계 조회
+   */
+  getAPIUsageStats(startDate = null, endDate = null, providerName = null) {
+    try {
+      let query = `
+        SELECT 
+          ai_provider,
+          model,
+          task_type,
+          SUM(input_tokens) as total_input_tokens,
+          SUM(output_tokens) as total_output_tokens,
+          SUM(total_tokens) as total_tokens,
+          SUM(estimated_cost) as total_cost,
+          AVG(response_time) as avg_response_time,
+          COUNT(*) as total_calls,
+          SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful_calls
+        FROM api_usage
+        WHERE 1=1
+      `;
+      const params = [];
+
+      if (startDate) {
+        query += ' AND created_at >= ?';
+        params.push(startDate);
+      }
+
+      if (endDate) {
+        query += ' AND created_at <= ?';
+        params.push(endDate);
+      }
+
+      if (providerName) {
+        query += ' AND ai_provider = ?';
+        params.push(providerName);
+      }
+
+      query += ' GROUP BY ai_provider, model, task_type ORDER BY total_calls DESC';
+
+      const stats = this.db.prepare(query).all(...params);
+
+      return stats.map(record => ({
+        provider: record.ai_provider,
+        model: record.model,
+        taskType: record.task_type,
+        totalInputTokens: record.total_input_tokens,
+        totalOutputTokens: record.total_output_tokens,
+        totalTokens: record.total_tokens,
+        totalCost: record.total_cost,
+        avgResponseTime: record.avg_response_time,
+        totalCalls: record.total_calls,
+        successfulCalls: record.successful_calls,
+        successRate: record.total_calls > 0 ? record.successful_calls / record.total_calls : 0
+      }));
+    } catch (error) {
+      logger.error('Failed to get API usage stats', error);
+      return [];
+    }
+  }
+
+  /**
    * 데이터베이스 연결 종료
    */
   close() {

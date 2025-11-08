@@ -827,6 +827,74 @@ export function createRoutes(orchestrator, webSearch) {
   }));
 
   /**
+   * GET /api/performance/alerts
+   * 성능 경고 조회
+   */
+  router.get('/performance/alerts', asyncHandler(async (req, res) => {
+    const { provider, taskType } = req.query;
+    const alerts = orchestrator.performanceMonitor.checkPerformanceAlerts(provider, taskType);
+    
+    res.json({
+      success: true,
+      alerts,
+      count: alerts.length
+    });
+  }));
+
+  /**
+   * GET /api/performance/history
+   * 성능 히스토리 조회 (그래프용)
+   */
+  router.get('/performance/history', asyncHandler(async (req, res) => {
+    const { provider, taskType, hours = 24 } = req.query;
+    const history = orchestrator.performanceMonitor.getPerformanceHistory(
+      provider || null,
+      taskType || null,
+      parseInt(hours)
+    );
+    
+    res.json({
+      success: true,
+      history
+    });
+  }));
+
+  /**
+   * GET /api/performance/comparison
+   * AI별 성능 비교 데이터 조회
+   */
+  router.get('/performance/comparison', asyncHandler(async (req, res) => {
+    const { taskType, limit = 10 } = req.query;
+    const comparison = orchestrator.performanceMonitor.getProviderComparison(
+      taskType || null,
+      parseInt(limit)
+    );
+    
+    res.json({
+      success: true,
+      comparison
+    });
+  }));
+
+  /**
+   * GET /api/performance/usage
+   * API 사용량 통계 조회
+   */
+  router.get('/performance/usage', asyncHandler(async (req, res) => {
+    const { startDate, endDate, provider } = req.query;
+    const stats = orchestrator.performanceMonitor.getAPIUsageStats(
+      startDate || null,
+      endDate || null,
+      provider || null
+    );
+    
+    res.json({
+      success: true,
+      stats
+    });
+  }));
+
+  /**
    * GET /api/voting/feedback/:sessionId/:voteId
    * Voting 선택 피드백 통계 조회
    */
