@@ -7,3 +7,4 @@ data/*.db-wal
 .env
 backup_*.tar.gz
 .backup_timestamp
+uploads/

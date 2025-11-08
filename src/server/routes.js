@@ -1,9 +1,46 @@
 import express from 'express';
+import multer from 'multer';
 import { AthenaOrchestrator } from '../core/orchestrator.js';
 import { WebSearchService } from '../utils/webSearch.js';
 import { asyncHandler, createErrorResponse } from '../utils/errorHandler.js';
 import { logger } from '../utils/logger.js';
 import { getDatabase } from '../database/schema.js';
+import path from 'path';
+import fs from 'fs';
+
+// 파일 업로드 설정
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB
+  },
+  fileFilter: (req, file, cb) => {
+    // 이미지, 비디오, 문서 파일 허용
+    const allowedTypes = /jpeg|jpg|png|gif|webp|pdf|doc|docx|txt|mp4|mov|avi/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    
+    if (extname && mimetype) {
+      return cb(null, true);
+    } else {
+      cb(new Error('지원하지 않는 파일 형식입니다.'));
+    }
+  }
+});
 
 export function createRoutes(orchestrator, webSearch) {
   const router = express.Router();
@@ -107,20 +144,75 @@ export function createRoutes(orchestrator, webSearch) {
 
   /**
    * POST /api/chat/stream
-   * 스트리밍 채팅
+   * 스트리밍 채팅 (파일 업로드 지원)
    */
-  router.post('/chat/stream', asyncHandler(async (req, res) => {
+  router.post('/chat/stream', upload.array('files', 10), asyncHandler(async (req, res) => {
     const { userId, sessionId, message } = req.body;
+    const files = req.files || [];
 
-    if (!userId || !sessionId || !message) {
-      const error = new Error('필수 파라미터 누락: userId, sessionId, message');
+    if (!userId || !sessionId) {
+      const error = new Error('필수 파라미터 누락: userId, sessionId');
       error.status = 400;
       throw error;
     }
 
-    logger.debug('Stream chat request received', { userId, sessionId, messageLength: message.length });
+    logger.debug('Stream chat request received', { 
+      userId, 
+      sessionId, 
+      messageLength: message?.length || 0,
+      fileCount: files.length 
+    });
 
-    // SSE 헤더 설정 (먼저 설정하여 스트리밍 시작)
+    // 파일 처리: 이미지 파일을 base64로 인코딩
+    let imageData = [];
+    let fileInfo = [];
+    
+    if (files.length > 0) {
+      for (const file of files) {
+        const fileInfoItem = {
+          name: file.originalname,
+          size: file.size,
+          mimetype: file.mimetype,
+          type: file.mimetype.split('/')[0] // 'image', 'video', 'application' 등
+        };
+        
+        // 이미지 파일인 경우 base64 인코딩
+        if (file.mimetype.startsWith('image/')) {
+          try {
+            const fileBuffer = fs.readFileSync(file.path);
+            const base64Image = fileBuffer.toString('base64');
+            imageData.push({
+              type: 'image_url',
+              image_url: {
+                url: `data:${file.mimetype};base64,${base64Image}`
+              }
+            });
+            fileInfoItem.processed = true;
+          } catch (error) {
+            logger.error('Failed to process image file', error, { filename: file.originalname });
+            fileInfoItem.error = '이미지 처리 실패';
+          }
+        }
+        
+        fileInfo.push(fileInfoItem);
+        
+        // 임시 파일 삭제 (처리 후)
+        try {
+          fs.unlinkSync(file.path);
+        } catch (error) {
+          logger.warn('Failed to delete temp file', error, { path: file.path });
+        }
+      }
+    }
+
+    // 메시지와 파일 정보 결합
+    let finalMessage = message || '';
+    if (fileInfo.length > 0) {
+      const fileList = fileInfo.map(f => `📎 ${f.name} (${(f.size / 1024).toFixed(1)}KB)`).join('\n');
+      finalMessage = finalMessage ? `${finalMessage}\n\n${fileList}` : fileList;
+    }
+
+    // SSE 헤더 설정
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -130,16 +222,16 @@ export function createRoutes(orchestrator, webSearch) {
     let searchResults = null;
     
     try {
-      const needsSearch = webSearch.needsWebSearch(message);
-      const needsYouTube = webSearch.needsYouTubeSearch(message);
-      const hasYouTubeLink = webSearch.hasYouTubeLink(message);
+      const needsSearch = webSearch.needsWebSearch(finalMessage);
+      const needsYouTube = webSearch.needsYouTubeSearch(finalMessage);
+      const hasYouTubeLink = webSearch.hasYouTubeLink(finalMessage);
 
       logger.debug('검색 필요 여부 확인', { needsSearch, needsYouTube, hasYouTubeLink });
 
       if (hasYouTubeLink) {
         logger.info('📺 유튜브 링크 감지됨 (스트리밍)');
         try {
-          const videoInfo = await webSearch.getYouTubeVideoFromUrl(message);
+          const videoInfo = await webSearch.getYouTubeVideoFromUrl(finalMessage);
           if (videoInfo) {
             logger.info('✅ 유튜브 비디오 정보 가져옴 (스트리밍)', { title: videoInfo.title });
             searchResults = [{
@@ -154,44 +246,41 @@ export function createRoutes(orchestrator, webSearch) {
             }];
           }
         } catch (error) {
-          logger.logWebSearchError(error, message, { type: 'youtube_video', mode: 'stream' });
+          logger.logWebSearchError(error, finalMessage, { type: 'youtube_video', mode: 'stream' });
         }
       } else if (needsYouTube) {
         try {
-          const searchData = await webSearch.search(message, { type: 'youtube' });
+          const searchData = await webSearch.search(finalMessage, { type: 'youtube' });
           searchResults = searchData.results;
           logger.info('YouTube 검색 완료 (스트리밍)', { resultsCount: searchResults?.length || 0 });
         } catch (error) {
-          logger.logWebSearchError(error, message, { type: 'youtube', mode: 'stream' });
+          logger.logWebSearchError(error, finalMessage, { type: 'youtube', mode: 'stream' });
         }
       } else if (needsSearch) {
         try {
-          const searchData = await webSearch.search(message);
+          const searchData = await webSearch.search(finalMessage);
           searchResults = searchData.results;
           logger.info('웹 검색 완료 (스트리밍)', { resultsCount: searchResults?.length || 0 });
           
-          // 검색 결과에 관련성 점수 포함 (있는 경우)
           if (searchResults && searchResults.length > 0) {
             searchResults = searchResults.map(result => ({
               ...result,
-              relevanceScore: result.relevanceScore || webSearch.getRelevanceScore(result, message)
+              relevanceScore: result.relevanceScore || webSearch.getRelevanceScore(result, finalMessage)
             }));
           }
         } catch (error) {
-          logger.logWebSearchError(error, message, { type: 'web', mode: 'stream' });
+          logger.logWebSearchError(error, finalMessage, { type: 'web', mode: 'stream' });
           searchResults = null;
         }
       }
     } catch (searchError) {
-      logger.logWebSearchError(searchError, message, { mode: 'stream' });
+      logger.logWebSearchError(searchError, finalMessage, { mode: 'stream' });
       searchResults = null;
     }
 
-    logger.debug('orchestrator.processStream 호출 전', { searchResultsCount: searchResults?.length || 0 });
-
-    // 스트리밍 처리
+    // 스트리밍 처리 (이미지 데이터 포함)
     try {
-      for await (const chunk of orchestrator.processStream(userId, sessionId, message, searchResults)) {
+      for await (const chunk of orchestrator.processStream(userId, sessionId, finalMessage, searchResults, imageData)) {
         res.write(`data: ${chunk.trim()}\n\n`);
       }
       res.write('data: [DONE]\n\n');

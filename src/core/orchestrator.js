@@ -356,9 +356,9 @@ ${learningContext}
   }
 
   /**
-   * 스트리밍 처리 함수 (모든 협업 모드 지원)
+   * 스트리밍 처리 함수 (모든 협업 모드 지원, 이미지 데이터 포함)
    */
-  async *processStream(userId, sessionId, userMessage, searchResults = null) {
+  async *processStream(userId, sessionId, userMessage, searchResults = null, imageData = []) {
     try {
       // 1. 사용자 메시지 저장
       this.memory.addShortTermMemory(userId, sessionId, 'user', userMessage);
@@ -368,25 +368,25 @@ ${learningContext}
       
       console.log('🎬 스트리밍 모드:', strategy.collaborationMode);
 
-      // 3. 전략에 따라 스트리밍 실행
+      // 3. 전략에 따라 스트리밍 실행 (이미지 데이터 전달)
       switch (strategy.collaborationMode) {
         case 'single':
-          yield* this.executeSingleStream(userId, sessionId, userMessage, strategy, searchResults);
+          yield* this.executeSingleStream(userId, sessionId, userMessage, strategy, searchResults, imageData);
           break;
         case 'parallel':
-          yield* this.executeParallelStream(userId, sessionId, userMessage, strategy, searchResults);
+          yield* this.executeParallelStream(userId, sessionId, userMessage, strategy, searchResults, imageData);
           break;
         case 'sequential':
-          yield* this.executeSequentialStream(userId, sessionId, userMessage, strategy, searchResults);
+          yield* this.executeSequentialStream(userId, sessionId, userMessage, strategy, searchResults, imageData);
           break;
         case 'debate':
-          yield* this.executeDebateStream(userId, sessionId, userMessage, strategy, searchResults);
+          yield* this.executeDebateStream(userId, sessionId, userMessage, strategy, searchResults, imageData);
           break;
         case 'voting':
-          yield* this.executeVotingStream(userId, sessionId, userMessage, strategy, searchResults);
+          yield* this.executeVotingStream(userId, sessionId, userMessage, strategy, searchResults, imageData);
           break;
         default:
-          yield* this.executeSingleStream(userId, sessionId, userMessage, strategy, searchResults);
+          yield* this.executeSingleStream(userId, sessionId, userMessage, strategy, searchResults, imageData);
       }
 
     } catch (error) {
@@ -397,9 +397,9 @@ ${learningContext}
   }
 
   /**
-   * Single 모드 스트리밍
+   * Single 모드 스트리밍 (이미지 데이터 지원)
    */
-  async *executeSingleStream(userId, sessionId, userMessage, strategy, searchResults = null) {
+  async *executeSingleStream(userId, sessionId, userMessage, strategy, searchResults = null, imageData = []) {
     const agentName = strategy.recommendedAgents[0] || 'ChatGPT';
     const agent = this.providers[agentName];
 
@@ -423,7 +423,6 @@ ${learningContext}
       if (isYouTubeVideo) {
         promptAddition = `\n\n## 유튜브 동영상 정보\n다음은 사용자가 요청한 유튜브 동영상의 정보입니다. 이 동영상의 제목, 설명, 채널 정보를 바탕으로 동영상의 내용을 요약하고 분석하세요:\n\n${searchContext}\n\n중요: 동영상의 제목과 설명을 바탕으로 동영상의 주요 내용을 요약하고, 사용자가 요청한 내용(예: 요약, 분석 등)에 맞게 답변하세요. 동영상의 링크도 함께 제공하세요.`;
       } else {
-        // 각 검색 결과에 번호를 매겨서 출처 참조를 쉽게 함
         const searchContextWithNumbers = searchResults.map((result, index) => {
           const reliability = this.webSearchService.getSourceReliability(result.link);
           return `[출처 ${index + 1}]
@@ -443,13 +442,25 @@ URL: ${result.link}
       systemPrompt += promptAddition;
     }
     
+    // 메시지 구성 (이미지 데이터 포함)
     const messages = [
       { role: 'system', content: systemPrompt },
-      ...context,
-      { role: 'user', content: userMessage }
+      ...context
     ];
+    
+    // 사용자 메시지에 이미지가 있으면 Vision API 형식으로 추가
+    if (imageData.length > 0 && (agentName === 'ChatGPT' || agentName === 'Gemini')) {
+      // OpenAI Vision API 형식
+      const userMessageContent = [
+        { type: 'text', text: userMessage },
+        ...imageData
+      ];
+      messages.push({ role: 'user', content: userMessageContent });
+    } else {
+      messages.push({ role: 'user', content: userMessage });
+    }
 
-    const stream = await agent.streamChat(messages);
+    const stream = await agent.streamChat(messages, { imageData: imageData.length > 0 ? imageData : null });
     let fullContent = '';
     let metadata = {
       provider: agent.name,
@@ -638,12 +649,12 @@ URL: ${result.link}
       // 성공 기록
       this.performanceMonitor.recordSuccess(tracking, responseTime, response.usage, response.model);
 
-      return {
-        content: response.content,
-        agentsUsed: [agentName],
-        strategy: 'single',
-        metadata: {
-          provider: response.provider,
+    return {
+      content: response.content,
+      agentsUsed: [agentName],
+      strategy: 'single',
+      metadata: {
+        provider: response.provider,
           model: response.model,
           searchResults: searchResults,
           performance: {

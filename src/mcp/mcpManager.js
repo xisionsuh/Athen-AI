@@ -10,6 +10,7 @@ import { createAPICallerTool } from './tools/apiCaller.js';
 import { createDatabaseQueryTool } from './tools/databaseQuery.js';
 import { createImageProcessorTool } from './tools/imageProcessor.js';
 import { createEmailSenderTool } from './tools/emailSender.js';
+import { createWebBrowserTool } from './tools/webBrowser.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -73,6 +74,16 @@ export class MCPManager extends MCPBase {
         this.registerTool(emailSenderTool);
       } catch (error) {
         logger.warn('Email sender tool not available', { error: error.message });
+      }
+
+      // 웹 브라우저 제어 도구 등록 (puppeteer가 설치된 경우에만)
+      try {
+        const webBrowserTool = createWebBrowserTool({
+          workspaceRoot: this.workspaceRoot
+        });
+        this.registerTool(webBrowserTool);
+      } catch (error) {
+        logger.warn('Web browser tool not available', { error: error.message });
       }
 
       logger.info('MCP tools initialized', {

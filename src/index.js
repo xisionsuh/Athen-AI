@@ -13,6 +13,7 @@ import { setupPassport } from './server/auth.js';
 import { createAuthRoutes } from './server/authRoutes.js';
 import { errorHandler } from './utils/errorHandler.js';
 import { logger } from './utils/logger.js';
+import { cleanupBrowser } from './mcp/tools/webBrowser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -146,6 +147,19 @@ ${process.env.XAI_API_KEY ? '✓ 4th' : '✗ 4th'} Grok (Final Backup Meta AI)
 Database: ${dbPath}
 Log Level: ${logger.logLevel}
   `);
+});
+
+// 프로세스 종료 시 브라우저 정리
+process.on('SIGINT', async () => {
+  logger.info('SIGINT received, cleaning up...');
+  await cleanupBrowser();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  logger.info('SIGTERM received, cleaning up...');
+  await cleanupBrowser();
+  process.exit(0);
 });
 
 export default app;

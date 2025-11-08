@@ -19,6 +19,11 @@ const performanceBtn = document.getElementById('performanceBtn');
 const performanceModal = document.getElementById('performanceModal');
 const voiceInputBtn = document.getElementById('voiceInputBtn');
 const voiceIcon = document.getElementById('voiceIcon');
+const fileUploadBtn = document.getElementById('fileUploadBtn');
+const fileInput = document.getElementById('fileInput');
+
+// 업로드된 파일 저장
+let uploadedFiles = [];
 
 // 음성 관련 변수
 let recognition = null;
@@ -186,7 +191,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // 주기적으로 AI 상태 체크
-  setInterval(checkAIStatus, 30000);
+  // AI 상태 체크 (30초마다, 서버 연결 실패 시에는 5분마다)
+  statusCheckInterval = setInterval(() => {
+    // 서버 연결이 실패한 상태면 5분마다만 체크
+    if (serverConnectionFailed) {
+      // 마지막 실패 후 5분이 지났는지 확인
+      if (consecutiveFailures % 10 === 0) { // 30초 * 10 = 5분
+        checkAIStatus();
+      }
+    } else {
+      // 정상 상태면 30초마다 체크
+      checkAIStatus();
+    }
+  }, 30000);
 
   // 키보드 단축키 설정
   setupKeyboardShortcuts();
@@ -326,15 +343,33 @@ async function handleSendMessage(e) {
   }
 
   const message = messageInput.value.trim();
-  if (!message) return;
+  const hasFiles = uploadedFiles.length > 0;
+  
+  // 메시지와 파일이 모두 없으면 무시
+  if (!message && !hasFiles) return;
 
   // 제출 시작 플래그 설정
   isSubmitting = true;
   sendBtn.disabled = true;
 
   // UI 업데이트
-  addMessage('user', message);
-  window.lastUserMessage = message; // 마지막 사용자 메시지 저장
+  if (message) {
+    addMessage('user', message);
+    window.lastUserMessage = message; // 마지막 사용자 메시지 저장
+  }
+  
+  // 파일이 있으면 파일 메시지 추가
+  if (hasFiles) {
+    const fileMessage = uploadedFiles.map(f => `📎 ${f.name}`).join('\n');
+    addMessage('user', fileMessage);
+    
+    // 파일 미리보기 제거
+    const container = document.querySelector('.file-previews-container');
+    if (container) {
+      container.remove();
+    }
+  }
+  
   messageInput.value = '';
   messageInput.style.height = 'auto';
   showThinking('생각하는 중...');
@@ -343,7 +378,11 @@ async function handleSendMessage(e) {
   const useStreaming = true;
 
   try {
-    if (useStreaming) {
+    if (hasFiles) {
+      // 파일이 있는 경우 FormData 사용
+      await handleStreamingMessageWithFiles(message, uploadedFiles);
+      uploadedFiles = []; // 파일 목록 초기화
+    } else if (useStreaming) {
       await handleStreamingMessage(message);
     } else {
       await handleRegularMessage(message);
@@ -381,7 +420,119 @@ async function handleRegularMessage(message) {
   } catch (error) {
     console.error('Error:', error);
     hideThinking();
-    addMessage('assistant', '죄송합니다. 오류가 발생했습니다: ' + error.message);
+    
+    // 서버 연결 실패인 경우 특별 처리
+    if (error.message.includes('Failed to fetch') || error.message.includes('ERR_CONNECTION_REFUSED')) {
+      addMessage('assistant', '서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.\n\n터미널에서 다음 명령어로 서버를 시작할 수 있습니다:\n```bash\nnpm start\n```', null);
+      showServerConnectionError();
+    } else {
+      addMessage('assistant', '죄송합니다. 오류가 발생했습니다: ' + error.message, null);
+    }
+  }
+}
+
+// 파일이 포함된 스트리밍 메시지 처리
+async function handleStreamingMessageWithFiles(message, files) {
+  try {
+    const formData = new FormData();
+    formData.append('userId', userId);
+    formData.append('sessionId', currentSessionId);
+    formData.append('message', message || '');
+    
+    files.forEach((file) => {
+      formData.append('files', file);
+    });
+
+    const response = await fetch(`${API_BASE}/chat/stream`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let fullContent = '';
+    let metadata = null;
+    let assistantMessageDiv = null;
+    let metadataDiv = null;
+
+    hideThinking();
+
+    // 메시지 영역에 스트리밍 메시지 추가
+    assistantMessageDiv = document.createElement('div');
+    assistantMessageDiv.className = 'message assistant';
+    assistantMessageDiv.innerHTML = `
+      <div class="message-avatar">🧠</div>
+      <div class="message-content">
+        <div class="streaming-content"></div>
+        <div class="message-metadata"></div>
+      </div>
+    `;
+    chatMessages.appendChild(assistantMessageDiv);
+    metadataDiv = assistantMessageDiv.querySelector('.message-metadata');
+
+    const contentDiv = assistantMessageDiv.querySelector('.streaming-content');
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          
+          if (data === '[DONE]') {
+            if (metadata) {
+              renderMetadata(metadataDiv, metadata);
+            }
+            if (fullContent) {
+              contentDiv.innerHTML = formatMessage(fullContent, metadata?.searchResults || null);
+            }
+            handleStreamingComplete(fullContent);
+            await loadSessions();
+            return;
+          }
+
+          try {
+            const parsed = JSON.parse(data);
+            
+            if (parsed.type === 'content') {
+              fullContent = parsed.content;
+              contentDiv.innerHTML = formatMessage(fullContent, metadata?.searchResults || null);
+              chatMessages.scrollTop = chatMessages.scrollHeight;
+            } else if (parsed.type === 'metadata') {
+              metadata = parsed.metadata;
+            } else if (parsed.type === 'chunk') {
+              fullContent += parsed.content;
+              contentDiv.innerHTML = formatMessage(fullContent, metadata?.searchResults || null);
+              chatMessages.scrollTop = chatMessages.scrollHeight;
+            } else if (parsed.type === 'error') {
+              throw new Error(parsed.error || '알 수 없는 오류');
+            }
+          } catch (parseError) {
+            console.error('Parse error:', parseError, 'Data:', data);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Streaming error:', error);
+    hideThinking();
+    
+    if (error.message.includes('Failed to fetch') || error.message.includes('ERR_CONNECTION_REFUSED')) {
+      addMessage('assistant', '서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.\n\n터미널에서 다음 명령어로 서버를 시작할 수 있습니다:\n```bash\nnpm start\n```', null);
+      showServerConnectionError();
+    } else {
+      addMessage('assistant', '죄송합니다. 스트리밍 중 오류가 발생했습니다: ' + error.message, null);
+    }
   }
 }
 
@@ -539,7 +690,14 @@ async function handleStreamingMessage(message) {
   } catch (error) {
     console.error('Streaming error:', error);
     hideThinking();
-    addMessage('assistant', '죄송합니다. 스트리밍 중 오류가 발생했습니다: ' + error.message);
+    
+    // 서버 연결 실패인 경우 특별 처리
+    if (error.message.includes('Failed to fetch') || error.message.includes('ERR_CONNECTION_REFUSED')) {
+      addMessage('assistant', '서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.\n\n터미널에서 다음 명령어로 서버를 시작할 수 있습니다:\n```bash\nnpm start\n```', null);
+      showServerConnectionError();
+    } else {
+      addMessage('assistant', '죄송합니다. 스트리밍 중 오류가 발생했습니다: ' + error.message, null);
+    }
   }
 }
 
@@ -1940,21 +2098,94 @@ window.deleteSession = async function(sessionId, event) {
 };
 
 // AI 상태 체크
+// 서버 연결 상태 추적
+let serverConnectionFailed = false;
+let consecutiveFailures = 0;
+let statusCheckInterval = null;
+
 async function checkAIStatus() {
   try {
-    const response = await fetch(`${API_BASE}/health`);
+    // AbortController를 사용하여 타임아웃 구현 (브라우저 호환성)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
+    const response = await fetch(`${API_BASE}/health`, {
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
     const data = await response.json();
 
     if (data.success) {
+      // 연결 성공 시 상태 리셋
+      serverConnectionFailed = false;
+      consecutiveFailures = 0;
       updateStatusIndicator('gptStatus', data.providers['ChatGPT']?.isAvailable);
       updateStatusIndicator('geminiStatus', data.providers['Gemini']?.isAvailable);
       updateStatusIndicator('claudeStatus', data.providers['Claude']?.isAvailable);
       updateStatusIndicator('grokStatus', data.providers['Grok']?.isAvailable);
+      
+      // 서버 연결 성공 알림 제거
+      hideServerConnectionError();
     }
   } catch (error) {
-    console.error('Failed to check AI status:', error);
+    consecutiveFailures++;
+    
+    // 연속 실패가 3회 이상이면 서버 연결 실패로 간주
+    if (consecutiveFailures >= 3) {
+      serverConnectionFailed = true;
+      
+      // 모든 상태 표시기를 오프라인으로 설정
+      updateStatusIndicator('gptStatus', false);
+      updateStatusIndicator('geminiStatus', false);
+      updateStatusIndicator('claudeStatus', false);
+      updateStatusIndicator('grokStatus', false);
+      
+      // 서버 연결 오류 메시지 표시
+      showServerConnectionError();
+      
+      // 에러 로그는 첫 번째 실패와 3회째 실패만 출력
+      if (consecutiveFailures === 3) {
+        console.warn('서버 연결 실패: 서버가 실행 중이지 않거나 연결할 수 없습니다.');
+      }
+    } else {
+      // 처음 2회는 조용히 실패 (콘솔 로그 없음)
+    }
   }
 }
+
+// 서버 연결 오류 메시지 표시
+function showServerConnectionError() {
+  // 이미 표시되어 있으면 중복 표시하지 않음
+  if (document.getElementById('serverConnectionError')) {
+    return;
+  }
+  
+  const errorDiv = document.createElement('div');
+  errorDiv.id = 'serverConnectionError';
+  errorDiv.className = 'server-connection-error';
+  errorDiv.innerHTML = `
+    <div class="error-content">
+      <span class="error-icon">⚠️</span>
+      <span class="error-message">서버에 연결할 수 없습니다. 서버가 실행 중인지 확인해주세요.</span>
+      <button class="error-close" onclick="hideServerConnectionError()">×</button>
+    </div>
+  `;
+  
+  // 채팅 메시지 영역 상단에 표시
+  const chatMessages = document.getElementById('chatMessages');
+  if (chatMessages) {
+    chatMessages.insertBefore(errorDiv, chatMessages.firstChild);
+  }
+}
+
+// 서버 연결 오류 메시지 숨기기
+window.hideServerConnectionError = function() {
+  const errorDiv = document.getElementById('serverConnectionError');
+  if (errorDiv) {
+    errorDiv.remove();
+  }
+};
 
 function updateStatusIndicator(elementId, isOnline) {
   const element = document.getElementById(elementId);
@@ -2916,6 +3147,142 @@ async function loadVoteFeedback() {
   } catch (error) {
     console.error('Failed to load vote feedback:', error);
   }
+}
+
+// 파일 업로드 처리
+async function handleFileUpload(event) {
+  const files = Array.from(event.target.files);
+  if (files.length === 0) return;
+
+  // 파일 크기 제한 (10MB)
+  const maxSize = 10 * 1024 * 1024;
+  const validFiles = files.filter(file => {
+    if (file.size > maxSize) {
+      alert(`파일 "${file.name}"이(가) 너무 큽니다. 최대 10MB까지 업로드 가능합니다.`);
+      return false;
+    }
+    return true;
+  });
+
+  if (validFiles.length === 0) return;
+
+  // 파일 미리보기 표시
+  validFiles.forEach(file => {
+    uploadedFiles.push(file);
+    displayFilePreview(file);
+  });
+
+  // 파일 입력 초기화
+  fileInput.value = '';
+}
+
+// 파일 미리보기 표시
+function displayFilePreview(file) {
+  const previewDiv = document.createElement('div');
+  previewDiv.className = 'file-preview';
+  previewDiv.setAttribute('data-filename', file.name);
+  
+  const fileIcon = getFileIcon(file.type);
+  const fileSize = formatFileSize(file.size);
+  
+  previewDiv.innerHTML = `
+    <div class="file-preview-content">
+      <span class="file-icon">${fileIcon}</span>
+      <div class="file-info">
+        <div class="file-name">${escapeHtml(file.name)}</div>
+        <div class="file-size">${fileSize}</div>
+      </div>
+      <button class="file-remove-btn" onclick="removeFile('${escapeHtml(file.name)}')" title="제거">×</button>
+    </div>
+  `;
+
+  // 채팅 입력 영역 위에 표시
+  const chatInputContainer = document.querySelector('.chat-input-container');
+  const existingPreviews = chatInputContainer.querySelector('.file-previews-container');
+  
+  if (!existingPreviews) {
+    const container = document.createElement('div');
+    container.className = 'file-previews-container';
+    chatInputContainer.insertBefore(container, chatForm);
+    container.appendChild(previewDiv);
+  } else {
+    existingPreviews.appendChild(previewDiv);
+  }
+}
+
+// 파일 아이콘 반환
+function getFileIcon(mimeType) {
+  if (mimeType.startsWith('image/')) return '🖼️';
+  if (mimeType.startsWith('video/')) return '🎥';
+  if (mimeType.includes('pdf')) return '📄';
+  if (mimeType.includes('word') || mimeType.includes('document')) return '📝';
+  if (mimeType.includes('text')) return '📃';
+  return '📎';
+}
+
+// 파일 크기 포맷팅
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// 파일 제거
+window.removeFile = function(filename) {
+  uploadedFiles = uploadedFiles.filter(f => f.name !== filename);
+  const preview = document.querySelector(`[data-filename="${escapeHtml(filename)}"]`);
+  if (preview) {
+    preview.remove();
+  }
+  
+  // 미리보기 컨테이너가 비어있으면 제거
+  const container = document.querySelector('.file-previews-container');
+  if (container && container.children.length === 0) {
+    container.remove();
+  }
+}
+
+// 드래그 앤 드롭 설정
+function setupDragAndDrop() {
+  const chatInputContainer = document.querySelector('.chat-input-container');
+  const chatForm = document.getElementById('chatForm');
+  
+  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+    chatForm.addEventListener(eventName, preventDefaults, false);
+    chatInputContainer.addEventListener(eventName, preventDefaults, false);
+  });
+
+  function preventDefaults(e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  ['dragenter', 'dragover'].forEach(eventName => {
+    chatForm.addEventListener(eventName, () => {
+      chatForm.classList.add('drag-over');
+    }, false);
+  });
+
+  ['dragleave', 'drop'].forEach(eventName => {
+    chatForm.addEventListener(eventName, () => {
+      chatForm.classList.remove('drag-over');
+    }, false);
+  });
+
+  chatForm.addEventListener('drop', (e) => {
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) {
+      const fakeEvent = { target: { files: files } };
+      handleFileUpload(fakeEvent);
+    }
+  }, false);
+}
+
+// HTML 이스케이프 유틸리티
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 // Textarea 자동 높이 조절

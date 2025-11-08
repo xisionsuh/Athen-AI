@@ -231,6 +231,66 @@ body {
   background: var(--error);
 }
 
+/* 서버 연결 오류 메시지 */
+.server-connection-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid var(--error);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  animation: slideDown 0.3s ease-out;
+}
+
+.server-connection-error .error-content {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.server-connection-error .error-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.server-connection-error .error-message {
+  flex: 1;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.server-connection-error .error-close {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.server-connection-error .error-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* 메인 콘텐츠 */
 .main-content {
   flex: 1;
@@ -2836,4 +2896,302 @@ kbd + kbd {
   transform: scale(1.2);
 }
 
-/* 반응형 */
+/* 반응형 디자인 */
+@media (max-width: 768px) {
+  /* 모바일 화면 최적화 */
+  .app-container {
+    flex-direction: column;
+  }
+
+  /* 사이드바 모바일 최적화 */
+  .sidebar {
+    width: 100%;
+    height: auto;
+    max-height: 50vh;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    order: 2;
+  }
+
+  .sidebar-header {
+    padding: 1rem;
+  }
+
+  .sidebar-header h1 {
+    font-size: 1.5rem;
+  }
+
+  .new-chat-btn {
+    margin: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.9rem;
+  }
+
+  .sessions-list {
+    max-height: 200px;
+  }
+
+  .session-item {
+    padding: 0.6rem 0.8rem;
+    margin-bottom: 0.4rem;
+  }
+
+  .session-item h4 {
+    font-size: 0.85rem;
+  }
+
+  .session-item p {
+    font-size: 0.7rem;
+  }
+
+  /* 메인 콘텐츠 모바일 최적화 */
+  .main-content {
+    order: 1;
+    height: 50vh;
+    min-height: 50vh;
+  }
+
+  .chat-header {
+    padding: 0.75rem 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .chat-header h2 {
+    font-size: 1.1rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .header-actions {
+    gap: 0.5rem;
+  }
+
+  .icon-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 1rem;
+    padding: 0.5rem;
+  }
+
+  .chat-messages {
+    padding: 1rem 0.75rem;
+  }
+
+  .message {
+    padding: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .message-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 1rem;
+  }
+
+  .message-content {
+    font-size: 0.9rem;
+    line-height: 1.5;
+  }
+
+  /* 채팅 입력 영역 모바일 최적화 */
+  .chat-input-container {
+    padding: 0.75rem;
+  }
+
+  .chat-input-form {
+    gap: 0.5rem;
+  }
+
+  #messageInput {
+    font-size: 0.9rem;
+    padding: 0.75rem;
+  }
+
+  .input-actions {
+    gap: 0.5rem;
+  }
+
+  .voice-btn,
+  .send-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 1rem;
+  }
+
+  /* 모달 모바일 최적화 */
+  .modal-content {
+    width: 95%;
+    max-width: 95%;
+    max-height: 90vh;
+    margin: 1rem auto;
+    padding: 1rem;
+  }
+
+  .modal-header h3 {
+    font-size: 1.2rem;
+  }
+
+  .modal-body {
+    padding: 0.75rem;
+    max-height: calc(90vh - 120px);
+    overflow-y: auto;
+  }
+
+  /* 메타데이터 배지 모바일 최적화 */
+  .message-metadata {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .metadata-badge {
+    font-size: 0.7rem;
+    padding: 0.3rem 0.6rem;
+  }
+
+  /* 출처 섹션 모바일 최적화 */
+  .sources-section {
+    margin-top: 0.75rem;
+  }
+
+  .source-item {
+    padding: 0.75rem;
+  }
+
+  .source-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .source-badges {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  /* Debate/Voting 모달 모바일 최적화 */
+  .debate-container,
+  .voting-container {
+    padding: 0.5rem;
+  }
+
+  .debate-controls {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .debate-view-btn {
+    font-size: 0.8rem;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .compare-table-container {
+    overflow-x: auto;
+  }
+
+  .compare-table {
+    font-size: 0.8rem;
+  }
+
+  /* 성능 대시보드 모바일 최적화 */
+  .performance-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .usage-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-container {
+    height: 250px;
+  }
+
+  /* 터치 제스처 개선 */
+  .session-item,
+  .message,
+  .source-item {
+    -webkit-tap-highlight-color: rgba(102, 126, 234, 0.2);
+  }
+
+  /* 버튼 터치 영역 확대 */
+  button,
+  .icon-btn,
+  .voice-btn,
+  .send-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* 작은 모바일 화면 추가 최적화 */
+  .sidebar-header h1 {
+    font-size: 1.3rem;
+  }
+
+  .chat-header h2 {
+    font-size: 1rem;
+  }
+
+  .message-content {
+    font-size: 0.85rem;
+  }
+
+  .modal-content {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    border-radius: 0;
+    max-height: 100vh;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+  }
+
+  .icon-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 0.9rem;
+  }
+}
+
+/* 태블릿 최적화 */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .sidebar {
+    width: 250px;
+  }
+
+  .chat-header {
+    padding: 1rem 1.25rem;
+  }
+
+  .message {
+    padding: 1rem;
+  }
+}
+
+/* 터치 디바이스 최적화 */
+@media (hover: none) and (pointer: coarse) {
+  /* 터치 디바이스에서 호버 효과 제거 */
+  .session-item:hover {
+    transform: none;
+  }
+
+  /* 터치 친화적인 버튼 크기 */
+  button,
+  .icon-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* 스크롤 영역 터치 최적화 */
+  .chat-messages,
+  .sessions-list {
+    -webkit-overflow-scrolling: touch;
+  }
+}
