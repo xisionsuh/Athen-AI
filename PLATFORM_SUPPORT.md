@@ -34,7 +34,7 @@ brew install python3
 
 #### 설치
 ```bash
-cd Athen-AI
+cd Athena-AI
 npm install
 ```
 
@@ -57,7 +57,7 @@ npm install
 #### Windows에서 설치
 ```powershell
 # PowerShell 또는 CMD에서 실행
-cd Athen-AI
+cd Athena-AI
 npm install
 ```
 

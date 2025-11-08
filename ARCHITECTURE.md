@@ -7,7 +7,7 @@ Athena는 여러 AI 모델을 통합하여 하나의 지능적인 인격체처�
 ## 디렉토리 구조
 
 ```
-Athen-AI/
+Athena-AI/
 ├── src/
 │   ├── ai/
 │   │   └── providers/          # AI 프로바이더 통합

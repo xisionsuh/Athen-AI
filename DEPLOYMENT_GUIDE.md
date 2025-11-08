@@ -8,12 +8,12 @@
 
 ```bash
 # 저장소 클론
-git clone https://github.com/your-username/Athen-AI.git
+git clone https://github.com/your-username/Athena-AI.git
 # 또는
-git clone git@github.com:your-username/Athen-AI.git
+git clone git@github.com:your-username/Athena-AI.git
 
 # 프로젝트 디렉토리로 이동
-cd Athen-AI
+cd Athena-AI
 ```
 
 #### 로컬 Git 저장소만 있는 경우
@@ -23,23 +23,23 @@ cd Athen-AI
 **방법 1: USB/네트워크로 복사**
 ```bash
 # 원본 PC에서
-cd /path/to/Athen-AI
+cd /path/to/Athena-AI
 tar -czf athena-ai-backup.tar.gz --exclude='node_modules' --exclude='data/*.db-shm' --exclude='data/*.db-wal' --exclude='.env' .
 
 # 다른 PC에서
 tar -xzf athena-ai-backup.tar.gz
-cd Athen-AI
+cd Athena-AI
 ```
 
 **방법 2: Git Bundle 사용**
 ```bash
 # 원본 PC에서
-cd /path/to/Athen-AI
+cd /path/to/Athena-AI
 git bundle create athena-ai.bundle --all
 
 # 다른 PC에서
-git clone athena-ai.bundle Athen-AI
-cd Athen-AI
+git clone athena-ai.bundle Athena-AI
+cd Athena-AI
 ```
 
 ### 2. 의존성 설치
@@ -140,7 +140,7 @@ http://localhost:3000
 
 ```bash
 # 저장소로 이동
-cd Athen-AI
+cd Athena-AI
 
 # 최신 변경사항 가져오기
 git pull origin main
@@ -187,10 +187,10 @@ GitHub/GitLab 등에 저장소를 만들고 연결하려면:
 
 ```bash
 # 원격 저장소 추가
-git remote add origin https://github.com/your-username/Athen-AI.git
+git remote add origin https://github.com/your-username/Athena-AI.git
 
 # 또는 SSH 사용
-git remote add origin git@github.com:your-username/Athen-AI.git
+git remote add origin git@github.com:your-username/Athena-AI.git
 
 # 첫 푸시
 git push -u origin main

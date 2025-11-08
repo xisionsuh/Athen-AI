@@ -79,7 +79,7 @@ Athena는 Claude, ChatGPT, Gemini, Meta AI 등 여러 AI 모델을 통합하여 
 ### 2. 프로젝트 클론 및 설치
 
 ```bash
-cd Athen-AI
+cd Athena-AI
 npm install
 ```
 

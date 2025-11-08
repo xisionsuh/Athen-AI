@@ -41,7 +41,7 @@
 ## 📂 프로젝트 구조
 
 ```
-Athen-AI/
+Athena-AI/
 ├── src/
 │   ├── ai/providers/        # AI 프로바이더 (Claude, GPT, Gemini, Meta)
 │   ├── core/                # 핵심 오케스트레이터
@@ -63,7 +63,7 @@ Athen-AI/
 
 ### 1. 설치
 ```bash
-cd Athen-AI
+cd Athena-AI
 npm install
 ```
 
