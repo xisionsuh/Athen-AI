@@ -3667,15 +3667,6 @@ kbd + kbd {
     max-height: 60vh;
   }
 }
-  border-top: 1px solid var(--border-color);
-}
-
-.image-prompt {
-  margin: 0;
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-  font-style: italic;
-}
 
 .image-actions {
   display: flex;
