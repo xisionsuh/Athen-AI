@@ -2874,6 +2874,123 @@ kbd + kbd {
   position: relative;
 }
 
+/* 플러그인 관리 스타일 */
+.plugins-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.plugins-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.plugin-item {
+  background: var(--surface);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  transition: border-color 0.2s ease;
+}
+
+.plugin-item:hover {
+  border-color: var(--primary-color);
+}
+
+.plugin-item.plugin-enabled {
+  border-left: 4px solid var(--success);
+}
+
+.plugin-item.plugin-disabled {
+  border-left: 4px solid var(--text-secondary);
+  opacity: 0.7;
+}
+
+.plugin-info {
+  flex: 1;
+}
+
+.plugin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.plugin-header h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.1rem;
+}
+
+.plugin-status {
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+}
+
+.plugin-status.plugin-enabled {
+  color: var(--success);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.plugin-status.plugin-disabled {
+  color: var(--text-secondary);
+  background: rgba(184, 184, 212, 0.1);
+}
+
+.plugin-description {
+  color: var(--text-secondary);
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.plugin-meta {
+  display: flex;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.plugin-version {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.plugin-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.no-plugins {
+  text-align: center;
+  padding: 3rem 2rem;
+  color: var(--text-secondary);
+}
+
+.no-plugins p {
+  margin: 0.5rem 0;
+}
+
+.plugin-hint {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.plugin-hint code {
+  background: var(--background-dark);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+}
+
 .performance-details {
   background: var(--surface);
   padding: 1.5rem;
