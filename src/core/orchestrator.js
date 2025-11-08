@@ -664,6 +664,11 @@ URL: ${result.link}
    */
   async process(userId, sessionId, userMessage, searchResults = null) {
     try {
+      // 0. 플러그인 훅: 메시지 전처리
+      if (this.pluginLoader) {
+        userMessage = await this.pluginLoader.executeHook('beforeMessage', userMessage, userId, sessionId);
+      }
+      
       // 1. 사용자 메시지 저장
       this.memory.addShortTermMemory(userId, sessionId, 'user', userMessage);
 
