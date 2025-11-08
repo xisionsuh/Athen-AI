@@ -991,11 +991,19 @@ export function createRoutes(orchestrator, webSearch) {
       return res.json({ success: true, plugins: [] });
     }
 
-    const plugins = orchestrator.pluginLoader.getPlugins();
-    res.json({
-      success: true,
-      plugins
-    });
+    try {
+      const plugins = orchestrator.pluginLoader.getPlugins();
+      res.json({
+        success: true,
+        plugins: plugins || []
+      });
+    } catch (error) {
+      logger.error('Failed to get plugins', error);
+      res.json({
+        success: true,
+        plugins: []
+      });
+    }
   }));
 
   /**
