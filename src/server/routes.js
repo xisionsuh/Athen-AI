@@ -192,6 +192,15 @@ export function createRoutes(orchestrator, webSearch) {
             logger.error('Failed to process image file', error, { filename: file.originalname });
             fileInfoItem.error = '이미지 처리 실패';
           }
+        } else if (file.mimetype.startsWith('video/')) {
+          // 비디오 파일인 경우 메타데이터 추출 (향후 분석 기능 확장 가능)
+          fileInfoItem.video = true;
+          fileInfoItem.processed = false; // 비디오 분석은 향후 구현 예정
+          logger.info('Video file uploaded', { 
+            filename: file.originalname, 
+            size: file.size,
+            mimetype: file.mimetype 
+          });
         }
         
         fileInfo.push(fileInfoItem);
@@ -208,8 +217,17 @@ export function createRoutes(orchestrator, webSearch) {
     // 메시지와 파일 정보 결합
     let finalMessage = message || '';
     if (fileInfo.length > 0) {
-      const fileList = fileInfo.map(f => `📎 ${f.name} (${(f.size / 1024).toFixed(1)}KB)`).join('\n');
-      finalMessage = finalMessage ? `${finalMessage}\n\n${fileList}` : fileList;
+      const fileList = fileInfo.map(f => {
+        const sizeKB = (f.size / 1024).toFixed(1);
+        const icon = f.video ? '🎬' : f.type === 'image' ? '🖼️' : '📎';
+        return `${icon} ${f.name} (${sizeKB}KB)`;
+      }).join('\n');
+      
+      // 비디오 파일이 있는 경우 안내 메시지 추가
+      const hasVideo = fileInfo.some(f => f.video);
+      const videoNote = hasVideo ? '\n\n⚠️ 비디오 파일 분석 기능은 현재 개발 중입니다. 비디오 내용에 대한 질문을 해주시면 가능한 범위에서 답변드리겠습니다.' : '';
+      
+      finalMessage = finalMessage ? `${finalMessage}\n\n${fileList}${videoNote}` : `${fileList}${videoNote}`;
     }
 
     // SSE 헤더 설정
@@ -740,6 +758,52 @@ export function createRoutes(orchestrator, webSearch) {
       success: true,
       message: '피드백이 저장되었습니다'
     });
+  }));
+
+  /**
+   * POST /api/image/generate
+   * DALL-E 이미지 생성
+   */
+  router.post('/image/generate', asyncHandler(async (req, res) => {
+    const { prompt, size, quality, style } = req.body;
+
+    if (!prompt) {
+      const error = new Error('필수 파라미터 누락: prompt');
+      error.status = 400;
+      throw error;
+    }
+
+    logger.debug('Image generation request received', { prompt, size, quality, style });
+
+    // OpenAI Provider 가져오기
+    const openaiProvider = orchestrator.providers['ChatGPT'];
+    if (!openaiProvider) {
+      const error = new Error('OpenAI Provider가 사용 불가능합니다.');
+      error.status = 503;
+      throw error;
+    }
+
+    try {
+      const result = await openaiProvider.generateImage(prompt, {
+        size: size || '1024x1024',
+        quality: quality || 'standard',
+        style: style || 'vivid',
+        n: 1
+      });
+
+      logger.info('Image generated successfully', { 
+        imageCount: result.images.length,
+        model: result.model 
+      });
+
+      res.json({
+        success: true,
+        ...result
+      });
+    } catch (error) {
+      logger.error('Image generation failed', error, { prompt });
+      throw error;
+    }
   }));
 
   /**

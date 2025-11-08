@@ -82,4 +82,45 @@ export class OpenAIProvider extends AIProvider {
       throw error;
     }
   }
+
+  /**
+   * 이미지 생성 (DALL-E)
+   * @param {string} prompt - 이미지 생성 프롬프트
+   * @param {object} options - 옵션 (size, quality, n 등)
+   * @returns {Promise<object>} 생성된 이미지 URL 배열
+   */
+  async generateImage(prompt, options = {}) {
+    try {
+      const {
+        size = '1024x1024',
+        quality = 'standard',
+        n = 1,
+        style = 'vivid'
+      } = options;
+
+      const response = await this.client.images.generate({
+        model: 'dall-e-3',
+        prompt: prompt,
+        n: n,
+        size: size,
+        quality: quality,
+        style: style
+      });
+
+      const imageUrls = response.data.map(img => ({
+        url: img.url,
+        revised_prompt: img.revised_prompt || prompt
+      }));
+
+      return {
+        success: true,
+        images: imageUrls,
+        provider: this.name,
+        model: 'dall-e-3'
+      };
+    } catch (error) {
+      this.lastError = error.message;
+      throw error;
+    }
+  }
 }

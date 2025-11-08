@@ -1576,6 +1576,31 @@ function formatMessage(text, searchResults = null) {
     window.lastCitationStats = citationStats;
   }
   
+  // 이미지 URL 감지 및 표시 (DALL-E 생성 이미지)
+  formatted = formatted.replace(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|gif|webp))/gi, (match, url) => {
+    // OpenAI DALL-E 이미지 URL인지 확인
+    if (url.includes('oaidalleapiprodscus') || url.includes('dalle')) {
+      return `<div class="generated-image-container">
+        <img src="${url}" alt="생성된 이미지" class="generated-image" loading="lazy" />
+        <div class="image-actions">
+          <a href="${url}" target="_blank" rel="noopener noreferrer" class="image-download-btn" download>다운로드</a>
+        </div>
+      </div>`;
+    }
+    return `<img src="${url}" alt="이미지" class="inline-image" loading="lazy" />`;
+  });
+
+  // 이미지 생성 요청 감지 (예: "이미지 생성: 고양이" 또는 "그려줘: 강아지")
+  const imageGenerationPattern = /(?:이미지\s*생성|그려줘|그려|그림\s*그려|draw|generate\s*image)[:：]\s*(.+)/i;
+  const imageMatch = formatted.match(imageGenerationPattern);
+  if (imageMatch && !formatted.includes('generated-image-container')) {
+    const imagePrompt = imageMatch[1].trim();
+    // 이미지 생성 요청을 비동기로 처리 (메시지에 표시)
+    setTimeout(() => {
+      generateImage(imagePrompt);
+    }, 100);
+  }
+  
   // 마크다운 처리
   formatted = formatted
     .replace(/\n/g, '<br>')
@@ -1584,6 +1609,54 @@ function formatMessage(text, searchResults = null) {
     .replace(/`(.*?)`/g, '<code>$1</code>');
   
   return formatted;
+}
+
+// 이미지 생성 함수
+async function generateImage(prompt) {
+  try {
+    // 로딩 메시지 추가
+    const loadingMessage = addMessage('assistant', `🖼️ 이미지 생성 중: "${prompt}"...`, null);
+    const loadingDiv = loadingMessage.querySelector('.message-content');
+    
+    const response = await fetch(`${API_BASE}/image/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: prompt,
+        size: '1024x1024',
+        quality: 'standard',
+        style: 'vivid'
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.success && data.images && data.images.length > 0) {
+      // 로딩 메시지 업데이트
+      const imageHtml = data.images.map(img => `
+        <div class="generated-image-container">
+          <img src="${img.url}" alt="${prompt}" class="generated-image" loading="lazy" />
+          <div class="image-info">
+            <p class="image-prompt">${img.revised_prompt || prompt}</p>
+          </div>
+          <div class="image-actions">
+            <a href="${img.url}" target="_blank" rel="noopener noreferrer" class="image-download-btn" download>다운로드</a>
+            <button class="image-copy-btn" onclick="navigator.clipboard.writeText('${img.url}')">URL 복사</button>
+          </div>
+        </div>
+      `).join('');
+      
+      loadingDiv.innerHTML = `<div class="image-generation-result">
+        <h4>🎨 생성된 이미지</h4>
+        ${imageHtml}
+      </div>`;
+    } else {
+      loadingDiv.innerHTML = `❌ 이미지 생성 실패: ${data.error || '알 수 없는 오류'}`;
+    }
+  } catch (error) {
+    console.error('Image generation error:', error);
+    const errorMessage = addMessage('assistant', `❌ 이미지 생성 중 오류가 발생했습니다: ${error.message}`, null);
+  }
 }
 
 // 출처 신뢰도 판단 함수 (프론트엔드용)
