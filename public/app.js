@@ -37,6 +37,8 @@ let voiceSettings = {
   pitch: 1.0,
   volume: 1.0
 };
+let isVoiceConversationMode = false; // 실시간 음성 대화 모드
+let voiceConversationBtn = null;
 
 // 로그인 체크
 async function checkLogin() {
@@ -116,10 +118,59 @@ document.addEventListener('DOMContentLoaded', async () => {
     performanceBtn.addEventListener('click', () => showPerformanceDashboard());
   }
   
+  // 웹 브라우저 제어 버튼
+  const browserControlBtn = document.getElementById('browserControlBtn');
+  if (browserControlBtn) {
+    browserControlBtn.addEventListener('click', () => openModal('browserControlModal'));
+  }
+  
+  // 웹 브라우저 제어 이벤트
+  const browserNavigateBtn = document.getElementById('browserNavigateBtn');
+  const browserScreenshotBtn = document.getElementById('browserScreenshotBtn');
+  const browserCloseBtn = document.getElementById('browserCloseBtn');
+  const browserUrlInput = document.getElementById('browserUrlInput');
+  
+  if (browserNavigateBtn) {
+    browserNavigateBtn.addEventListener('click', () => {
+      const url = browserUrlInput.value.trim();
+      if (url) {
+        sendBrowserCommand('navigate', url);
+      } else {
+        alert('URL을 입력해주세요.');
+      }
+    });
+  }
+  
+  if (browserScreenshotBtn) {
+    browserScreenshotBtn.addEventListener('click', () => {
+      sendBrowserCommand('screenshot');
+    });
+  }
+  
+  if (browserCloseBtn) {
+    browserCloseBtn.addEventListener('click', () => {
+      sendBrowserCommand('close');
+    });
+  }
+  
+  if (browserUrlInput) {
+    browserUrlInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        browserNavigateBtn.click();
+      }
+    });
+  }
+  
   // 음성 입력 초기화
   if (voiceInputBtn) {
     initVoiceInput();
     voiceInputBtn.addEventListener('click', toggleVoiceInput);
+  }
+  
+  // 실시간 음성 대화 모드 버튼
+  voiceConversationBtn = document.getElementById('voiceConversationBtn');
+  if (voiceConversationBtn) {
+    voiceConversationBtn.addEventListener('click', toggleVoiceConversationMode);
   }
   
   // 음성 설정 로드
@@ -3785,7 +3836,17 @@ function initVoiceInput() {
     const transcript = event.results[0][0].transcript;
     messageInput.value = transcript;
     autoResizeTextarea();
-    stopVoiceInput();
+    
+    // 실시간 음성 대화 모드인 경우 자동 전송
+    if (isVoiceConversationMode) {
+      stopVoiceInput();
+      // 자동으로 메시지 전송
+      setTimeout(() => {
+        handleSendMessageWithVoice(transcript);
+      }, 300);
+    } else {
+      stopVoiceInput();
+    }
   };
 
   recognition.onerror = (event) => {
@@ -3804,6 +3865,15 @@ function initVoiceInput() {
 
   recognition.onend = () => {
     stopVoiceInput();
+    
+    // 실시간 음성 대화 모드인 경우 다시 시작
+    if (isVoiceConversationMode && !isListening) {
+      setTimeout(() => {
+        if (isVoiceConversationMode) {
+          startVoiceInput();
+        }
+      }, 500);
+    }
   };
 }
 
@@ -3850,7 +3920,145 @@ function stopVoiceInput() {
   if (voiceInputBtn) {
     voiceInputBtn.classList.remove('listening');
   }
-  hideThinking();
+  if (!isVoiceConversationMode) {
+    hideThinking();
+  }
+}
+
+// 실시간 음성 대화 모드 토글
+function toggleVoiceConversationMode() {
+  if (!recognition) {
+    alert('음성 인식 기능을 사용할 수 없습니다.');
+    return;
+  }
+
+  isVoiceConversationMode = !isVoiceConversationMode;
+  
+  if (voiceConversationBtn) {
+    if (isVoiceConversationMode) {
+      voiceConversationBtn.classList.add('active');
+      voiceConversationBtn.title = '실시간 음성 대화 모드 끄기';
+      // TTS 자동 활성화
+      if (!voiceSettings.enabled) {
+        voiceSettings.enabled = true;
+        updateTTSButton();
+      }
+      // 음성 입력 시작
+      startVoiceInput();
+      addMessage('assistant', '🗣️ 실시간 음성 대화 모드가 시작되었습니다. 말씀해주세요.', null);
+    } else {
+      voiceConversationBtn.classList.remove('active');
+      voiceConversationBtn.title = '실시간 음성 대화 모드 켜기';
+      stopVoiceInput();
+      addMessage('assistant', '음성 대화 모드가 종료되었습니다.', null);
+    }
+  }
+}
+
+// 실시간 음성 대화 모드용 메시지 전송
+async function handleSendMessageWithVoice(message) {
+  if (!message || !message.trim()) return;
+  
+  // 사용자 메시지 추가
+  addMessage('user', message, null);
+  
+  // 스트리밍 메시지 처리
+  try {
+    const response = await fetch(`${API_BASE}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        sessionId: currentSessionId,
+        message
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let fullContent = '';
+    let metadata = null;
+    let assistantMessageDiv = null;
+
+    // 메시지 영역에 스트리밍 메시지 추가
+    assistantMessageDiv = document.createElement('div');
+    assistantMessageDiv.className = 'message assistant';
+    assistantMessageDiv.innerHTML = `
+      <div class="message-avatar">🧠</div>
+      <div class="message-content">
+        <div class="streaming-content"></div>
+        <div class="message-metadata"></div>
+      </div>
+    `;
+    chatMessages.appendChild(assistantMessageDiv);
+
+    const contentDiv = assistantMessageDiv.querySelector('.streaming-content');
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') {
+            continue;
+          }
+
+          try {
+            const parsed = JSON.parse(data);
+            
+            if (parsed.type === 'content') {
+              fullContent = parsed.content;
+              contentDiv.innerHTML = formatMessage(fullContent, metadata?.searchResults || null);
+            } else if (parsed.type === 'metadata') {
+              metadata = parsed.metadata;
+            } else if (parsed.type === 'chunk') {
+              fullContent += parsed.content;
+              contentDiv.innerHTML = formatMessage(fullContent, metadata?.searchResults || null);
+            }
+          } catch (parseError) {
+            console.error('Parse error:', parseError);
+          }
+        }
+      }
+    }
+
+    // 응답 완료 후 음성 출력
+    if (fullContent && isVoiceConversationMode) {
+      // 텍스트만 추출 (HTML 태그 제거)
+      const textContent = fullContent.replace(/<[^>]*>/g, '').trim();
+      if (textContent) {
+        speakText(textContent);
+        
+        // 음성 출력 완료 후 다시 음성 입력 시작
+        currentUtterance.onend = () => {
+          if (isVoiceConversationMode) {
+            setTimeout(() => {
+              startVoiceInput();
+            }, 500);
+          }
+        };
+      }
+    }
+  } catch (error) {
+    console.error('Streaming error:', error);
+    addMessage('assistant', '죄송합니다. 오류가 발생했습니다: ' + error.message, null);
+    if (isVoiceConversationMode) {
+      setTimeout(() => {
+        startVoiceInput();
+      }, 1000);
+    }
+  }
 }
 
 // 음성 출력 (Text-to-Speech)
@@ -3869,6 +4077,19 @@ function speakText(text, options = {}) {
   utterance.rate = options.rate || voiceSettings.rate;
   utterance.pitch = options.pitch || voiceSettings.pitch;
   utterance.volume = (options.volume !== undefined ? options.volume : voiceSettings.volume) / 100;
+  
+  // 실시간 음성 대화 모드에서 음성 출력 완료 후 다시 입력 시작
+  if (isVoiceConversationMode) {
+    utterance.onend = () => {
+      if (isVoiceConversationMode && !isListening) {
+        setTimeout(() => {
+          startVoiceInput();
+        }, 500);
+      }
+    };
+  }
+  
+  currentUtterance = utterance;
 
   // 목소리 선택
   if (voiceSettings.voiceName) {

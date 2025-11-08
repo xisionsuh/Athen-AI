@@ -3221,6 +3221,99 @@ kbd + kbd {
   margin: 0.5rem 0;
 }
 
+/* 웹 브라우저 제어 UI 스타일 */
+.browser-control-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.browser-control-input {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.browser-url-input {
+  flex: 1;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.browser-url-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.browser-preview {
+  min-height: 400px;
+  max-height: 600px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--surface-secondary);
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.browser-preview-placeholder {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 2rem;
+}
+
+.browser-preview-placeholder p {
+  margin: 0.5rem 0;
+}
+
+.browser-hint {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.browser-preview img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.browser-control-actions {
+  margin-top: 1rem;
+}
+
+.browser-control-actions h4 {
+  margin: 0 0 0.75rem 0;
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.browser-quick-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-outline:hover {
+  background: var(--surface-secondary);
+  border-color: var(--primary-color);
+}
+
   .modal-content {
     width: 100%;
     max-width: 100%;

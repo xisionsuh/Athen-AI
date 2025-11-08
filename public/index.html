@@ -68,6 +68,9 @@
           <button class="icon-btn" id="voiceSettingsBtn" title="음성 설정">
             🎙️
           </button>
+          <button class="icon-btn" id="voiceConversationBtn" title="실시간 음성 대화 모드">
+            🗣️
+          </button>
           <button class="icon-btn" id="ttsToggle" title="음성 출력 (TTS) 켜기/끄기">
             🔊
           </button>
@@ -79,6 +82,9 @@
           </button>
           <button class="icon-btn" id="performanceBtn" title="성능 대시보드">
             📊
+          </button>
+          <button class="icon-btn" id="browserControlBtn" title="웹 브라우저 제어">
+            🌐
           </button>
           <button class="icon-btn" id="memoryBtn" title="장기 기억 관리">
             📚
@@ -227,6 +233,40 @@
       <div class="modal-body">
         <div id="performanceContent">
           <!-- 성능 통계 내용 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 웹 브라우저 제어 모달 -->
+  <div class="modal" id="browserControlModal" style="display: none;">
+    <div class="modal-content" style="max-width: 900px;">
+      <div class="modal-header">
+        <h3>🌐 웹 브라우저 제어</h3>
+        <button class="close-btn" data-modal="browserControlModal">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="browser-control-content">
+          <div class="browser-control-input">
+            <input type="text" id="browserUrlInput" placeholder="URL을 입력하세요 (예: https://example.com)" class="browser-url-input">
+            <button class="btn btn-primary" id="browserNavigateBtn">탐색</button>
+            <button class="btn btn-secondary" id="browserScreenshotBtn">스크린샷</button>
+            <button class="btn btn-secondary" id="browserCloseBtn">닫기</button>
+          </div>
+          <div class="browser-preview" id="browserPreview">
+            <div class="browser-preview-placeholder">
+              <p>웹 페이지를 탐색하면 여기에 스크린샷이 표시됩니다.</p>
+              <p class="browser-hint">💡 팁: AI에게 "https://example.com으로 이동해줘" 또는 "구글에서 검색해줘"라고 요청하면 자동으로 브라우저를 제어합니다.</p>
+            </div>
+          </div>
+          <div class="browser-control-actions">
+            <h4>빠른 작업</h4>
+            <div class="browser-quick-actions">
+              <button class="btn btn-outline" onclick="sendBrowserCommand('navigate', 'https://www.google.com')">구글 열기</button>
+              <button class="btn btn-outline" onclick="sendBrowserCommand('screenshot')">스크린샷 찍기</button>
+              <button class="btn btn-outline" onclick="sendBrowserCommand('getContent')">페이지 내용 가져오기</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
