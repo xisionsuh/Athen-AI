@@ -120,6 +120,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     performanceBtn.addEventListener('click', () => showPerformanceDashboard());
   }
   
+  if (learningBtn) {
+    learningBtn.addEventListener('click', () => showLearningDashboard());
+  }
+  
   // 웹 브라우저 제어 버튼
   const browserControlBtn = document.getElementById('browserControlBtn');
   if (browserControlBtn) {
@@ -4634,3 +4638,272 @@ window.sendBrowserCommand = async function(action, url = null) {
     alert('브라우저 제어 중 오류가 발생했습니다: ' + error.message);
   }
 };
+
+// 학습 결과 시각화 대시보드 표시
+async function showLearningDashboard() {
+  try {
+    if (!userId) {
+      alert('로그인이 필요합니다.');
+      return;
+    }
+
+    // 학습 데이터 가져오기
+    const [patternsRes, aiSelectionRes, satisfactionRes, heatmapRes] = await Promise.all([
+      fetch(`${API_BASE}/learning/patterns?userId=${userId}&days=30`).catch(() => ({ json: () => Promise.resolve({ success: false, patterns: [] }) })),
+      fetch(`${API_BASE}/learning/ai-selection?userId=${userId}&days=30`).catch(() => ({ json: () => Promise.resolve({ success: false, aiSelectionCount: {}, categoryPattern: {}, modePattern: {}, totalDecisions: 0 }) })),
+      fetch(`${API_BASE}/learning/satisfaction-trend?userId=${userId}&days=30`).catch(() => ({ json: () => Promise.resolve({ success: false, trend: [] }) })),
+      fetch(`${API_BASE}/learning/strategy-heatmap?userId=${userId}&days=30`).catch(() => ({ json: () => Promise.resolve({ success: false, heatmapData: {}, categories: [], modes: [], total: 0 }) }))
+    ]);
+
+    const patternsData = await patternsRes.json();
+    const aiSelectionData = await aiSelectionRes.json();
+    const satisfactionData = await satisfactionRes.json();
+    const heatmapData = await heatmapRes.json();
+
+    const content = document.getElementById('learningContent');
+    if (!content) return;
+
+    let html = '<div class="learning-dashboard">';
+
+    // AI 선택 패턴
+    if (aiSelectionData.success && aiSelectionData.totalDecisions > 0) {
+      html += '<div class="learning-section">';
+      html += '<h4>🤖 AI 선택 패턴</h4>';
+      html += '<div class="chart-container">';
+      html += '<canvas id="aiSelectionChart"></canvas>';
+      html += '</div>';
+      html += '</div>';
+
+      // 카테고리별 패턴
+      if (Object.keys(aiSelectionData.categoryPattern || {}).length > 0) {
+        html += '<div class="learning-section">';
+        html += '<h4>📂 카테고리별 AI 선택 패턴</h4>';
+        html += '<div class="chart-container">';
+        html += '<canvas id="categoryPatternChart"></canvas>';
+        html += '</div>';
+        html += '</div>';
+      }
+    }
+
+    // 사용자 만족도 추이
+    if (satisfactionData.success && satisfactionData.trend && satisfactionData.trend.length > 0) {
+      html += '<div class="learning-section">';
+      html += '<h4>😊 사용자 만족도 추이</h4>';
+      html += '<div class="chart-container">';
+      html += '<canvas id="satisfactionTrendChart"></canvas>';
+      html += '</div>';
+      html += '</div>';
+    }
+
+    // 전략 선택 패턴 히트맵
+    if (heatmapData.success && heatmapData.total > 0) {
+      html += '<div class="learning-section">';
+      html += '<h4>🗺️ 전략 선택 패턴 히트맵</h4>';
+      html += '<div class="heatmap-container">';
+      html += '<div class="heatmap-grid">';
+      
+      const categories = heatmapData.categories || [];
+      const modes = heatmapData.modes || [];
+      const heatmap = heatmapData.heatmapData || {};
+      const maxValue = Math.max(...Object.values(heatmap), 1);
+
+      // 헤더
+      html += '<div class="heatmap-header"></div>';
+      modes.forEach(mode => {
+        html += `<div class="heatmap-header">${mode}</div>`;
+      });
+
+      // 데이터 행
+      categories.forEach(category => {
+        html += `<div class="heatmap-label">${category}</div>`;
+        modes.forEach(mode => {
+          const key = `${category}-${mode}`;
+          const value = heatmap[key] || 0;
+          const intensity = maxValue > 0 ? (value / maxValue) : 0;
+          const opacity = Math.max(0.2, intensity);
+          html += `<div class="heatmap-cell" style="background-color: rgba(102, 126, 234, ${opacity});" title="${category} - ${mode}: ${value}회">
+            ${value > 0 ? value : ''}
+          </div>`;
+        });
+      });
+
+      html += '</div></div></div>';
+    }
+
+    // 학습 통계 요약
+    html += '<div class="learning-summary">';
+    html += '<h4>📊 학습 통계 요약</h4>';
+    html += '<div class="summary-grid">';
+    html += `<div class="summary-card">
+      <div class="summary-label">총 결정 수</div>
+      <div class="summary-value">${aiSelectionData.totalDecisions || 0}</div>
+    </div>`;
+    html += `<div class="summary-card">
+      <div class="summary-label">사용된 AI 수</div>
+      <div class="summary-value">${Object.keys(aiSelectionData.aiSelectionCount || {}).length}</div>
+    </div>`;
+    html += `<div class="summary-card">
+      <div class="summary-label">전략 조합 수</div>
+      <div class="summary-value">${heatmapData.total || 0}</div>
+    </div>`;
+    html += '</div></div>';
+
+    html += '</div>';
+    content.innerHTML = html;
+    openModal('learningModal');
+
+    // 차트 렌더링
+    if (typeof Chart !== 'undefined') {
+      // AI 선택 패턴 차트
+      if (aiSelectionData.success && aiSelectionData.aiSelectionCount) {
+        renderAISelectionChart(aiSelectionData.aiSelectionCount);
+      }
+
+      // 카테고리별 패턴 차트
+      if (aiSelectionData.categoryPattern && Object.keys(aiSelectionData.categoryPattern).length > 0) {
+        renderCategoryPatternChart(aiSelectionData.categoryPattern);
+      }
+
+      // 만족도 추이 차트
+      if (satisfactionData.success && satisfactionData.trend && satisfactionData.trend.length > 0) {
+        renderSatisfactionTrendChart(satisfactionData.trend);
+      }
+    } else {
+      console.warn('Chart.js가 로드되지 않았습니다.');
+    }
+  } catch (error) {
+    console.error('Failed to load learning dashboard:', error);
+    const content = document.getElementById('learningContent');
+    if (content) {
+      content.innerHTML = '<div class="error-message">학습 대시보드를 불러오는 중 오류가 발생했습니다: ' + error.message + '</div>';
+    }
+  }
+}
+
+// AI 선택 패턴 차트 렌더링
+function renderAISelectionChart(aiSelectionCount) {
+  const ctx = document.getElementById('aiSelectionChart');
+  if (!ctx) return;
+
+  const labels = Object.keys(aiSelectionCount);
+  const data = Object.values(aiSelectionCount);
+  const colors = ['#667eea', '#f093fb', '#4facfe', '#43e97b'];
+
+  new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: colors.slice(0, labels.length)
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'right'
+        },
+        title: {
+          display: true,
+          text: 'AI별 선택 횟수'
+        }
+      }
+    }
+  });
+}
+
+// 카테고리별 패턴 차트 렌더링
+function renderCategoryPatternChart(categoryPattern) {
+  const ctx = document.getElementById('categoryPatternChart');
+  if (!ctx) return;
+
+  const categories = Object.keys(categoryPattern);
+  const providers = [...new Set(Object.values(categoryPattern).flatMap(p => Object.keys(p)))];
+  const colors = ['#667eea', '#f093fb', '#4facfe', '#43e97b'];
+
+  const datasets = providers.map((provider, index) => ({
+    label: provider,
+    data: categories.map(cat => categoryPattern[cat][provider] || 0),
+    backgroundColor: colors[index % colors.length]
+  }));
+
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: categories,
+      datasets
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          stacked: true
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true
+        }
+      },
+      plugins: {
+        legend: {
+          position: 'top'
+        },
+        title: {
+          display: true,
+          text: '카테고리별 AI 선택 패턴'
+        }
+      }
+    }
+  });
+}
+
+// 만족도 추이 차트 렌더링
+function renderSatisfactionTrendChart(trend) {
+  const ctx = document.getElementById('satisfactionTrendChart');
+  if (!ctx) return;
+
+  const labels = trend.map(t => t.date);
+  const satisfactions = trend.map(t => (t.satisfaction || 0.5) * 100);
+
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: '만족도 (%)',
+        data: satisfactions,
+        borderColor: '#667eea',
+        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+        tension: 0.4,
+        fill: true
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          beginAtZero: true,
+          max: 100,
+          title: {
+            display: true,
+            text: '만족도 (%)'
+          }
+        }
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        },
+        title: {
+          display: true,
+          text: '사용자 만족도 추이 (30일)'
+        }
+      }
+    }
+  });
+}

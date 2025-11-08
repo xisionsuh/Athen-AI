@@ -2774,6 +2774,105 @@ kbd + kbd {
   background: var(--surface);
   padding: 1.5rem;
   border-radius: 8px;
+}
+
+/* 학습 결과 시각화 스타일 */
+.learning-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.learning-section {
+  background: var(--surface);
+  padding: 1.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.learning-section h4 {
+  margin-bottom: 1rem;
+  color: var(--primary-color);
+  font-size: 1.1rem;
+}
+
+.learning-summary {
+  background: var(--surface);
+  padding: 1.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.learning-summary h4 {
+  margin-bottom: 1rem;
+  color: var(--primary-color);
+}
+
+.summary-label {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.summary-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--primary-color);
+}
+
+/* 히트맵 스타일 */
+.heatmap-container {
+  overflow-x: auto;
+  margin-top: 1rem;
+}
+
+.heatmap-grid {
+  display: grid;
+  grid-template-columns: 150px repeat(auto-fit, minmax(100px, 1fr));
+  gap: 4px;
+  min-width: 500px;
+}
+
+.heatmap-header {
+  background: var(--background-dark);
+  padding: 0.75rem;
+  text-align: center;
+  font-weight: 600;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.heatmap-label {
+  background: var(--background-dark);
+  padding: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.heatmap-cell {
+  padding: 0.75rem;
+  text-align: center;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  transition: transform 0.2s ease;
+}
+
+.heatmap-cell:hover {
+  transform: scale(1.05);
+  z-index: 1;
+  position: relative;
+}
   border: 1px solid var(--border-color);
 }
 
