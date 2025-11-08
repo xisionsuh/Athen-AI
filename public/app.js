@@ -1643,14 +1643,28 @@ function formatMessage(text, searchResults = null) {
   formatted = formatted.replace(/(https?:\/\/[^\s]+\.(png|jpg|jpeg|gif|webp))/gi, (match, url) => {
     // OpenAI DALL-E 이미지 URL인지 확인
     if (url.includes('oaidalleapiprodscus') || url.includes('dalle')) {
-      return `<div class="generated-image-container">
-        <img src="${url}" alt="생성된 이미지" class="generated-image" loading="lazy" />
+      const imageId = `img-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      return `<div class="generated-image-container" data-image-id="${imageId}">
+        <div class="image-wrapper">
+          <img src="${url}" alt="생성된 이미지" class="generated-image" loading="lazy" onclick="openImageModal('${url}', '${imageId}')" />
+          <div class="image-overlay">
+            <button class="image-zoom-btn" onclick="openImageModal('${url}', '${imageId}')" title="확대">🔍</button>
+          </div>
+        </div>
+        <div class="image-info">
+          <div class="image-meta">
+            <span class="image-badge">🎨 DALL-E 생성</span>
+            <span class="image-time">${new Date().toLocaleString('ko-KR')}</span>
+          </div>
+        </div>
         <div class="image-actions">
-          <a href="${url}" target="_blank" rel="noopener noreferrer" class="image-download-btn" download>다운로드</a>
+          <a href="${url}" target="_blank" rel="noopener noreferrer" class="image-action-btn" download title="다운로드">💾 다운로드</a>
+          <button class="image-action-btn" onclick="copyImageUrl('${url}')" title="URL 복사">📋 URL 복사</button>
+          <button class="image-action-btn" onclick="openImageModal('${url}', '${imageId}')" title="확대">🔍 확대</button>
         </div>
       </div>`;
     }
-    return `<img src="${url}" alt="이미지" class="inline-image" loading="lazy" />`;
+    return `<img src="${url}" alt="이미지" class="inline-image" loading="lazy" onclick="openImageModal('${url}', 'img-inline-${Date.now()}')" style="cursor: pointer;" />`;
   });
 
   // 이미지 생성 요청 감지 (예: "이미지 생성: 고양이" 또는 "그려줘: 강아지")
@@ -1695,26 +1709,66 @@ async function generateImage(prompt) {
     const data = await response.json();
 
     if (data.success && data.images && data.images.length > 0) {
+      const generationTime = new Date().toLocaleString('ko-KR');
+      const isMultiple = data.images.length > 1;
+      
       // 로딩 메시지 업데이트
-      const imageHtml = data.images.map(img => `
-        <div class="generated-image-container">
-          <img src="${img.url}" alt="${prompt}" class="generated-image" loading="lazy" />
+      const imageHtml = data.images.map((img, index) => {
+        const imageId = `img-${Date.now()}-${index}`;
+        return `
+        <div class="generated-image-container ${isMultiple ? 'image-gallery-item' : ''}" data-image-id="${imageId}">
+          <div class="image-wrapper">
+            <img src="${img.url}" alt="${prompt}" class="generated-image" loading="lazy" onclick="openImageModal('${img.url}', '${imageId}')" />
+            <div class="image-overlay">
+              <button class="image-zoom-btn" onclick="openImageModal('${img.url}', '${imageId}')" title="확대">🔍</button>
+            </div>
+          </div>
           <div class="image-info">
-            <p class="image-prompt">${img.revised_prompt || prompt}</p>
+            <div class="image-meta">
+              <span class="image-badge">🎨 DALL-E ${data.model || 'dall-e-3'}</span>
+              <span class="image-time">${generationTime}</span>
+            </div>
+            ${img.revised_prompt && img.revised_prompt !== prompt ? `
+              <div class="image-prompt-section">
+                <p class="image-prompt-label">생성 프롬프트:</p>
+                <p class="image-prompt">${img.revised_prompt}</p>
+                ${prompt !== img.revised_prompt ? `<p class="image-original-prompt">원본: ${prompt}</p>` : ''}
+              </div>
+            ` : `
+              <div class="image-prompt-section">
+                <p class="image-prompt-label">프롬프트:</p>
+                <p class="image-prompt">${prompt}</p>
+              </div>
+            `}
           </div>
           <div class="image-actions">
-            <a href="${img.url}" target="_blank" rel="noopener noreferrer" class="image-download-btn" download>다운로드</a>
-            <button class="image-copy-btn" onclick="navigator.clipboard.writeText('${img.url}')">URL 복사</button>
+            <a href="${img.url}" target="_blank" rel="noopener noreferrer" class="image-action-btn" download title="다운로드">💾 다운로드</a>
+            <button class="image-action-btn" onclick="copyImageUrl('${img.url}')" title="URL 복사">📋 URL 복사</button>
+            <button class="image-action-btn" onclick="openImageModal('${img.url}', '${imageId}')" title="확대">🔍 확대</button>
+            <button class="image-action-btn" onclick="regenerateImage('${prompt}', ${index})" title="재생성">🔄 재생성</button>
           </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
       
       loadingDiv.innerHTML = `<div class="image-generation-result">
-        <h4>🎨 생성된 이미지</h4>
-        ${imageHtml}
+        <div class="image-result-header">
+          <h4>🎨 생성된 이미지${isMultiple ? ` (${data.images.length}개)` : ''}</h4>
+          <div class="image-result-meta">
+            <span class="image-model-badge">모델: ${data.model || 'dall-e-3'}</span>
+            <span class="image-size-badge">크기: ${data.size || '1024x1024'}</span>
+          </div>
+        </div>
+        <div class="image-gallery ${isMultiple ? 'gallery-grid' : ''}">
+          ${imageHtml}
+        </div>
       </div>`;
     } else {
-      loadingDiv.innerHTML = `❌ 이미지 생성 실패: ${data.error || '알 수 없는 오류'}`;
+      loadingDiv.innerHTML = `<div class="image-generation-error">
+        <p>❌ 이미지 생성 실패</p>
+        <p class="error-detail">${data.error || '알 수 없는 오류가 발생했습니다.'}</p>
+        <button class="btn btn-primary" onclick="regenerateImage('${prompt}', 0)">다시 시도</button>
+      </div>`;
     }
   } catch (error) {
     console.error('Image generation error:', error);
@@ -5000,3 +5054,93 @@ async function togglePlugin(pluginName, activate) {
 
 // 전역 함수로 등록
 window.togglePlugin = togglePlugin;
+
+// 이미지 모달 열기
+function openImageModal(imageUrl, imageId) {
+  // 기존 모달이 있으면 제거
+  const existingModal = document.getElementById('imageModal');
+  if (existingModal) {
+    existingModal.remove();
+  }
+
+  const modal = document.createElement('div');
+  modal.id = 'imageModal';
+  modal.className = 'modal';
+  modal.style.display = 'flex';
+  modal.innerHTML = `
+    <div class="modal-content image-modal-content">
+      <div class="image-modal-header">
+        <h3>🖼️ 이미지 보기</h3>
+        <button class="close-btn" onclick="closeImageModal()">×</button>
+      </div>
+      <div class="image-modal-body">
+        <img src="${imageUrl}" alt="확대된 이미지" class="modal-image" />
+        <div class="image-modal-actions">
+          <a href="${imageUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-primary" download>💾 다운로드</a>
+          <button class="btn btn-secondary" onclick="copyImageUrl('${imageUrl}')">📋 URL 복사</button>
+          <button class="btn btn-secondary" onclick="closeImageModal()">닫기</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // 모달 외부 클릭시 닫기
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      closeImageModal();
+    }
+  });
+
+  // ESC 키로 닫기
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      closeImageModal();
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+}
+
+// 이미지 모달 닫기
+function closeImageModal() {
+  const modal = document.getElementById('imageModal');
+  if (modal) {
+    modal.remove();
+  }
+}
+
+// 이미지 URL 복사
+function copyImageUrl(url) {
+  navigator.clipboard.writeText(url).then(() => {
+    // 임시 알림 표시
+    const notification = document.createElement('div');
+    notification.className = 'copy-notification';
+    notification.textContent = 'URL이 클립보드에 복사되었습니다!';
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+      notification.classList.add('show');
+    }, 10);
+    
+    setTimeout(() => {
+      notification.classList.remove('show');
+      setTimeout(() => notification.remove(), 300);
+    }, 2000);
+  }).catch(err => {
+    console.error('Failed to copy URL:', err);
+    alert('URL 복사에 실패했습니다.');
+  });
+}
+
+// 이미지 재생성
+function regenerateImage(prompt, index = 0) {
+  generateImage(prompt);
+}
+
+// 전역 함수로 등록
+window.openImageModal = openImageModal;
+window.closeImageModal = closeImageModal;
+window.copyImageUrl = copyImageUrl;
+window.regenerateImage = regenerateImage;
