@@ -7,9 +7,11 @@
   "exports": {
     ".": {
       "import": "./src/index.module.js",
-      "require": "./src/index.js"
+      "require": "./src/index.js",
+      "types": "./index.d.ts"
     }
   },
+  "types": "./index.d.ts",
   "type": "module",
   "scripts": {
     "dev": "nodemon src/index.js",
